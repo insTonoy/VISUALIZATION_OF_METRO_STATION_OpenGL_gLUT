@@ -1,499 +1,2294 @@
-
 #ifdef __APPLE__
+#include <GLUT/glut.h>
 #else
-  #include <GL/glut.h>
+#include <GL/glut.h>
 #endif
-
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 
-// GLOBAL SCENE SWITCH
-static int currentScene = 1;   // 1 = outdoor,  2 = ticket machine,  3 = platform
-static const int WIN_W = 1100;
-static const int WIN_H = 680;
+static int gActiveScene = 1;
 
+static void unifiedReshape(int w, int h);
+static void unifiedKeyboard(unsigned char k, int x, int y);
+static void unifiedDisplay();
+static void unifiedTimer(int v);
 
-//scene-1 animation state
-static float s1_car1Pos  = -15.0f;
-static float s1_car2Pos  =  15.0f;
-static float s1_metroPos =  -14.0f;
-static int   s1_metroDir =  1;
+namespace S1 {
 
-#define S1_MAX_CLOUDS 3
-typedef struct { float x,y,size,speed,alpha; } S1_Cloud;
-static S1_Cloud s1_clouds[S1_MAX_CLOUDS];
+static const double S1_PI = 3.14159265358979323846;
+static int winWidth = 800, winHeight = 600;
 
-#define S1_MAX_PEOPLE 8
-typedef struct { float pos,speed,r,g,b,size; } S1_Person;
-static S1_Person s1_people[S1_MAX_PEOPLE];
+static GLfloat winColors[256][3];
+static int winColorCount = 0;
 
-#define S1_MAX_LAMPS 6
-typedef struct { float x,y; } S1_Lamp;
-static S1_Lamp s1_lamps[S1_MAX_LAMPS];
+float car1Pos = -15.0f;
+float car2Pos = 15.0f;
 
-//random window colors
-static GLfloat s1_winColors[256][3];
-static int     s1_winColorCount = 0;
+float metroPos = -14.0f;
+int metroDirection = 2;
 
-//overhead wire height
-static const float S1_WIRE_Y = 6.1f;
+#define MAX_CLOUDS 3
+typedef struct {
+    float x, y;
+    float size;
+    float speed;
+    float alpha;
+} Cloud;
+Cloud clouds[MAX_CLOUDS];
 
-//scene-1 init helpers
-static void s1_generateWindowColors(int n)
-{
+#define MAX_PEOPLE 8
+typedef struct {
+    float pos;
+    float speed;
+    float r, g, b;
+    float size;
+} Person;
+Person people[MAX_PEOPLE];
+
+#define MAX_STAIR_PEOPLE 4
+typedef struct {
+    float x, y;
+    int phase;
+    float progress;
+    float speed;
+    float r, g, b, size;
+} StairPerson;
+StairPerson stairPeople[MAX_STAIR_PEOPLE];
+
+#define MAX_LAMPS 6
+typedef struct {
+    float x;
+    float y;
+} LampPost;
+LampPost lamps[MAX_LAMPS];
+
+const float WIRE_Y = 6.1f;
+
+float cycleAngle = 0.0f;
+float nightFactor = 0.0f;
+float sunAltitude = 0.0f;
+
+#define MAX_STARS 250
+typedef struct {
+    float x, y;
+    float brightness;
+} Star;
+Star stars[MAX_STARS];
+
+void generateWindowColors(int n);
+void initClouds();
+void initPeople();
+void initStairPeople();
+void initLamps();
+void initStars();
+void initBirds();
+void drawText2D(const char* str, float x, float y);
+void drawRect2D(float x, float y, float w, float h);
+void drawCircle2D(float cx, float cy, float radius, int segments);
+void drawCloud(float x, float y, float size, float alpha);
+void drawBird(float x, float y, float flap);
+void drawSkyDynamic();
+void drawSun(float x, float y, float alt);
+void drawMoon(float x, float y);
+void drawStars(float alpha);
+void drawBackground();
+void drawBuilding(float x, float w, float h, float r, float g, float b, int colorBase, float nightFactor);
+void drawTree(float x, float y);
+void drawLampPost(float x, float y, float nightFactor);
+void drawStairs();
+void drawConnectingWalkway();
+void drawBillboard();
+void drawTower();
+void drawStation(float nightFactor);
+void drawMetroTrack();
+void drawMetroTrain(float x, float nightFactor);
+void drawTrainCompartment(float cx, float y, float nightFactor);
+void drawCar(float x, float y, float r, float g, float b, float nightFactor);
+void drawPerson(float x, float y, float r, float g, float b, float size);
+void update(int value);
+void updateBirds();
+void display();
+void reshape(int w, int h);
+void initGL();
+
+void generateWindowColors(int n) {
     srand(42);
-    for(int i=0;i<n;i++)
+    for (int i = 0; i < n; i++) {
+        int type = rand() % 3;
+        if (type == 0)
+            {
+            winColors[i][0] = 0.9f + (rand() % 10) / 100.0f;
+            winColors[i][1] = 0.5f + (rand() % 40) / 100.0f;
+            winColors[i][2] = 0.2f + (rand() % 30) / 100.0f;
+        } else if (type == 1)
+         {
+            winColors[i][0] = 0.2f + (rand() % 30) / 100.0f;
+            winColors[i][1] = 0.5f + (rand() % 50) / 100.0f;
+            winColors[i][2] = 0.8f + (rand() % 20) / 100.0f;
+        } else
         {
-        int type=rand()%3;
-        if(type==0)
-        {
-            s1_winColors[i][0]=0.9f+(rand()%10)/100.0f;
-            s1_winColors[i][1]=0.5f+(rand()%40)/100.0f;
-            s1_winColors[i][2]=0.2f+(rand()%30)/100.0f;
-        }
-        else if(type==1)
-        {
-            s1_winColors[i][0]=0.2f+(rand()%30)/100.0f;
-            s1_winColors[i][1]=0.5f+(rand()%50)/100.0f;
-            s1_winColors[i][2]=0.8f+(rand()%20)/100.0f;
-        }
-        else
-        {
-            s1_winColors[i][0]=0.8f+(rand()%20)/100.0f;
-            s1_winColors[i][1]=0.8f+(rand()%20)/100.0f;
-            s1_winColors[i][2]=0.7f+(rand()%30)/100.0f;
+            winColors[i][0] = 0.8f + (rand() % 20) / 100.0f;
+            winColors[i][1] = 0.8f + (rand() % 20) / 100.0f;
+            winColors[i][2] = 0.7f + (rand() % 30) / 100.0f;
         }
     }
-    s1_winColorCount=n;
+    winColorCount = n;
 }
 
-static void s1_initClouds()
-{
-    s1_clouds[0]={-8.0f,7.5f,1.5f,0.015f,0.7f};
-    s1_clouds[1]={ 2.0f,8.0f,1.8f,0.02f, 0.6f};
-    s1_clouds[2]={10.0f,7.0f,1.3f,0.018f,0.7f};
+void initClouds() {
+    clouds[0] = (Cloud){-8.0f, 7.5f, 1.5f, 0.008f, 0.7f};
+    clouds[1] = (Cloud){2.0f, 8.0f, 1.8f, 0.010f, 0.6f};
+    clouds[2] = (Cloud){10.0f, 7.0f, 1.3f, 0.009f, 0.7f};
 }
 
-static void s1_initPeople()
-{
-    s1_people[0]={-10.0f, 0.025f,0.3f,0.4f,0.8f,0.9f};
-    s1_people[1]={ -6.0f, 0.03f, 0.9f,0.3f,0.3f,1.0f};
-    s1_people[2]={  5.0f,-0.022f,0.2f,0.7f,0.4f,0.85f};
-    s1_people[3]={  2.0f,-0.028f,0.8f,0.6f,0.2f,0.95f};
-    s1_people[4]={-12.0f, 0.022f,0.7f,0.3f,0.6f,1.1f};
-    s1_people[5]={ -2.0f, 0.018f,0.4f,0.8f,0.4f,0.88f};
-    s1_people[6]={  7.0f,-0.026f,0.5f,0.5f,0.7f,0.92f};
-    s1_people[7]={ -8.5f, 0.029f,0.9f,0.7f,0.2f,1.05f};
+void initPeople() {
+    people[0] = (Person){-10.0f, 0.012f, 0.3f, 0.4f, 0.8f, 0.9f};
+    people[1] = (Person){-6.0f, 0.015f, 0.9f, 0.3f, 0.3f, 1.0f};
+    people[2] = (Person){5.0f, -0.010f, 0.2f, 0.7f, 0.4f, 0.85f};
+    people[3] = (Person){2.0f, -0.012f, 0.8f, 0.6f, 0.2f, 0.95f};
+    people[4] = (Person){-12.0f, 0.010f, 0.7f, 0.3f, 0.6f, 1.1f};
+    people[5] = (Person){-2.0f, 0.008f, 0.4f, 0.8f, 0.4f, 0.88f};
+    people[6] = (Person){7.0f, -0.011f, 0.5f, 0.5f, 0.7f, 0.92f};
+    people[7] = (Person){-8.5f, 0.013f, 0.9f, 0.7f, 0.2f, 1.05f};
 }
 
-static void s1_initLamps()
-{
-    float lx[]={-13.0f,-9.0f,-4.5f,0.5f,6.0f,11.0f};
-    for(int i=0;i<S1_MAX_LAMPS;i++){s1_lamps[i].x=lx[i]; s1_lamps[i].y=-.40f;}
+void initStairPeople() {
+    stairPeople[0] = (StairPerson){-7.0f, 0.0f, 2, 0.0f, 0.0025f, 0.9f, 0.2f, 0.2f, 1.0f};
+    stairPeople[1] = (StairPerson){-6.0f, 0.75f, 0, 0.4f, 0.002f, 0.2f, 0.6f, 0.8f, 0.95f};
+    stairPeople[2] = (StairPerson){-3.8f, 2.4f, 1, 0.0f, 0.003f, 0.8f, 0.5f, 0.3f, 1.05f};
+    stairPeople[3] = (StairPerson){-7.0f, 0.0f, 0, 0.2f, 0.003f, 0.5f, 0.7f, 0.2f, 0.9f};
 }
 
-//scene-1 primitive helpers
-static void s1_drawText(const char*str,float x,float y)
-{
-    glRasterPos2f(x,y);
-    for(int i=0;str[i];i++) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12,str[i]);
+void initLamps() {
+    float lampX[] = {-13.0f, -9.0f, -4.5f, 0.5f, 6.0f, 11.0f};
+    for (int i = 0; i < MAX_LAMPS; i++) {
+        lamps[i].x = lampX[i];
+        lamps[i].y = -0.40f;
+    }
 }
 
-static void s1_rect(float x,float y,float w,float h)
-{
+void initStars() {
+    srand(123);
+    for (int i = 0; i < MAX_STARS; i++) {
+        stars[i].x = -14.0f + (rand() % 2800) / 100.0f;
+        stars[i].y = 2.0f + (rand() % 900) / 100.0f;
+        stars[i].brightness = 0.3f + (rand() % 70) / 100.0f;
+    }
+}
+
+
+void drawText2D(const char* str, float x, float y) {
+    glRasterPos2f(x, y);
+    for (int i = 0; str[i] != '\0'; i++) {
+        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, str[i]);
+    }
+}
+
+void drawRect2D(float x, float y, float w, float h) {
     glBegin(GL_QUADS);
-    glVertex2f(x-w/2,y); glVertex2f(x+w/2,y);
-    glVertex2f(x+w/2,y+h); glVertex2f(x-w/2,y+h);
+    glVertex2f(x - w/2, y);
+    glVertex2f(x + w/2, y);
+    glVertex2f(x + w/2, y + h);
+    glVertex2f(x - w/2, y + h);
     glEnd();
 }
 
-static void s1_circ(float cx,float cy,float r,int seg)
-{
-    glBegin(GL_TRIANGLE_FAN); glVertex2f(cx,cy);
-    for(int i=0;i<=seg;i++)
-    {
-        float a=i*(2.0f*3.14159f)/seg;
-        glVertex2f(cx+cosf(a)*r,cy+sinf(a)*r);
+void drawCircle2D(float cx, float cy, float radius, int segments) {
+    glBegin(GL_TRIANGLE_FAN);
+    glVertex2f(cx, cy);
+    for (int i = 0; i <= segments; i++) {
+        float angle = i * (2.0f * S1_PI) / segments;
+        glVertex2f(cx + cos(angle) * radius, cy + sin(angle) * radius);
     }
     glEnd();
 }
 
-//scene-1 drawing functions
-static void s1_drawSkyGradient()
-{
+void drawCloud(float x, float y, float size, float alpha) {
+    glColor4f(1.0f, 1.0f, 1.0f, alpha);
+    drawCircle2D(x, y, size * 0.6f, 20);
+    drawCircle2D(x + size * 0.4f, y - size * 0.1f, size * 0.5f, 20);
+    drawCircle2D(x - size * 0.4f, y - size * 0.1f, size * 0.5f, 20);
+    drawCircle2D(x + size * 0.7f, y - size * 0.2f, size * 0.4f, 20);
+    drawCircle2D(x - size * 0.7f, y - size * 0.2f, size * 0.4f, 20);
+    drawRect2D(x, y - size * 0.2f, size * 1.3f, size * 0.4f);
+}
+
+void drawBird(float x, float y, float flap) {
+    glPushMatrix();
+    glTranslatef(x, y, 0);
+    glScalef(0.3f, 0.3f, 1.0f);
+    glColor3f(0.1f, 0.1f, 0.1f);
+    glBegin(GL_TRIANGLES);
+    glVertex2f(-5.0f, 0.0f);
+    glVertex2f(0.0f, 3.0f + sinf(flap) * 2.0f);
+    glVertex2f(0.0f, 0.0f);
+    glVertex2f(5.0f, 0.0f);
+    glVertex2f(0.0f, 3.0f + sinf(flap) * 2.0f);
+    glVertex2f(0.0f, 0.0f);
+    glEnd();
+    glPopMatrix();
+}
+
+void drawSkyDynamic() {
+    float t = sunAltitude;
+    float night = nightFactor;
+
+    float twilight = 1.0f - fabs(t) * 5.0f;
+    if (twilight < 0.0f) twilight = 0.0f;
+    if (twilight > 1.0f) twilight = 1.0f;
+
+    float topR_day = 0.35f, topG_day = 0.55f, topB_day = 0.85f;
+    float botR_day = 0.60f, botG_day = 0.80f, botB_day = 1.00f;
+    float topR_night = 0.02f, topG_night = 0.03f, topB_night = 0.10f;
+    float botR_night = 0.05f, botG_night = 0.05f, botB_night = 0.15f;
+    float topR_twi = 0.45f, topG_twi = 0.20f, topB_twi = 0.35f;
+    float botR_twi = 0.70f, botG_twi = 0.40f, botB_twi = 0.50f;
+
+    float topR, topG, topB, botR, botG, botB;
+
+    if (night > 0.8f) {
+        topR = topR_night; topG = topG_night; topB = topB_night;
+        botR = botR_night; botG = botG_night; botB = botB_night;
+    } else if (twilight > 0.3f && t < 0.3f) {
+        float mix = twilight;
+        topR = topR_day * (1-mix) + topR_twi * mix;
+        topG = topG_day * (1-mix) + topG_twi * mix;
+        topB = topB_day * (1-mix) + topB_twi * mix;
+        botR = botR_day * (1-mix) + botR_twi * mix;
+        botG = botG_day * (1-mix) + botG_twi * mix;
+        botB = botB_day * (1-mix) + botB_twi * mix;
+    } else if (night > 0.0f) {
+        float mix = night;
+        topR = topR_day * (1-mix) + topR_night * mix;
+        topG = topG_day * (1-mix) + topG_night * mix;
+        topB = topB_day * (1-mix) + topB_night * mix;
+        botR = botR_day * (1-mix) + botR_night * mix;
+        botG = botG_day * (1-mix) + botG_night * mix;
+        botB = botB_day * (1-mix) + botB_night * mix;
+    } else {
+        topR = topR_day; topG = topG_day; topB = topB_day;
+        botR = botR_day; botG = botG_day; botB = botB_day;
+    }
+
     glDisable(GL_BLEND);
     glBegin(GL_QUADS);
-    glColor3f(0.35f,0.55f,0.85f); glVertex2f(-15.0f,10.0f); glVertex2f(15.0f,10.0f);
-    glColor3f(0.6f,0.8f,1.0f);   glVertex2f(15.0f,3.0f);   glVertex2f(-15.0f,3.0f);
+    glColor3f(topR, topG, topB);
+    glVertex2f(-15.0f, 10.0f);
+    glVertex2f(15.0f, 10.0f);
+    glColor3f(botR, botG, botB);
+    glVertex2f(15.0f, 3.0f);
+    glVertex2f(-15.0f, 3.0f);
     glEnd();
     glEnable(GL_BLEND);
 }
 
-static void s1_drawSun()
-{
-    glColor4f(1.0f,0.9f,0.6f,0.3f); s1_circ(11.0f,8.5f,1.2f,32);
-    glColor4f(1.0f,0.85f,0.4f,0.5f);s1_circ(11.0f,8.5f,0.9f,32);
-    glColor3f(1.0f,0.8f,0.2f);      s1_circ(11.0f,8.5f,0.6f,32);
+void drawSun(float x, float y, float alt) {
+    if (alt <= 0.0f) return;
+
+    float r = 1.0f;
+    float g = 0.9f + alt * 0.1f;
+    float b = 0.3f + alt * 0.4f;
+
+    if (alt < 0.3f) {
+        r = 1.0f;
+        g = 0.5f + alt * 0.8f;
+        b = 0.2f + alt * 0.5f;
+    }
+    glColor4f(r, g, b, 0.25f);
+    drawCircle2D(x, y, 1.2f, 32);
+    glColor4f(r, g, b, 0.5f);
+    drawCircle2D(x, y, 0.9f, 32);
+    glColor3f(r, g, b);
+    drawCircle2D(x, y, 0.6f, 32);
 }
 
-static void s1_drawCloud(float x,float y,float size,float alpha)
-{
-    glColor4f(1.0f,1.0f,1.0f,alpha);
-    s1_circ(x,           y,            size*0.6f,20);
-    s1_circ(x+size*0.4f, y-size*0.1f,  size*0.5f,20);
-    s1_circ(x-size*0.4f, y-size*0.1f,  size*0.5f,20);
-    s1_circ(x+size*0.7f, y-size*0.2f,  size*0.4f,20);
-    s1_circ(x-size*0.7f, y-size*0.2f,  size*0.4f,20);
-    s1_rect(x,           y-size*0.2f,   size*1.3f, size*0.4f);
+void drawMoon(float x, float y) {
+    glColor4f(0.9f, 0.9f, 1.0f, 0.2f);
+    drawCircle2D(x, y, 0.9f, 32);
+    glColor4f(0.85f, 0.85f, 0.95f, 0.6f);
+    drawCircle2D(x, y, 0.65f, 32);
+    glColor3f(0.95f, 0.95f, 1.0f);
+    drawCircle2D(x, y, 0.5f, 32);
+    glColor4f(0.7f, 0.7f, 0.8f, 0.4f);
+    drawCircle2D(x - 0.12f, y + 0.08f, 0.1f, 16);
+    drawCircle2D(x + 0.15f, y - 0.1f, 0.08f, 16);
 }
 
-static void s1_drawBackground()
-{
+void drawStars(float alpha) {
+    if (alpha <= 0.05f) return;
+    glEnable(GL_POINT_SMOOTH);
+    glPointSize(1.2f);
+    glBegin(GL_POINTS);
+    for (int i = 0; i < MAX_STARS; i++) {
+        float brightness = stars[i].brightness * alpha;
+        glColor4f(1.0f, 1.0f, 1.0f, brightness);
+        glVertex2f(stars[i].x, stars[i].y);
+    }
+    glEnd();
+    glPointSize(1.0f);
+}
+
+void drawBackground() {
     glDisable(GL_BLEND);
     glBegin(GL_QUADS);
-    glColor3f(0.45f,0.55f,0.35f); glVertex2f(-15.0f,-2.0f); glVertex2f(15.0f,-2.0f);
-    glColor3f(0.55f,0.65f,0.4f);  glVertex2f(15.0f,0.0f);   glVertex2f(-15.0f,0.0f);
+    glColor3f(0.45f, 0.55f, 0.35f);
+    glVertex2f(-15.0f, -2.0f);
+    glVertex2f(15.0f, -2.0f);
+    glColor3f(0.55f, 0.65f, 0.4f);
+    glVertex2f(15.0f, 0.0f);
+    glVertex2f(-15.0f, 0.0f);
     glEnd();
     glEnable(GL_BLEND);
 
-    glColor3f(0.7f,0.68f,0.65f); s1_rect(0,-0.21f,30.0f,0.2f);
+    glColor3f(0.7f, 0.68f, 0.65f);
+    drawRect2D(0, -0.21f, 30.0f, 0.2f);
 
-    glColor3f(0.2f,0.2f,0.22f);
+    glColor3f(0.2f, 0.2f, 0.22f);
     glBegin(GL_QUADS);
-    glVertex2f(-15.0f,-2.3f); glVertex2f(15.0f,-2.3f);
-    glVertex2f(15.0f,-0.4f);  glVertex2f(-15.0f,-0.4f);
+    glVertex2f(-15.0f, -2.3f);
+    glVertex2f(15.0f, -2.3f);
+    glVertex2f(15.0f, -0.4f);
+    glVertex2f(-15.0f, -0.4f);
     glEnd();
 
-    glColor3f(1.0f,1.0f,0.9f);
-    for(float x=-14.5f;x<15.0f;x+=1.2f) s1_rect(x,-1.25f,0.6f,0.08f);
+    glColor3f(1.0f, 1.0f, 0.9f);
+    for (float x = -14.5f; x < 15.0f; x += 1.2f) {
+        drawRect2D(x, -1.25f, 0.6f, 0.08f);
+    }
 }
 
-static void s1_drawBuilding(float x,float w,float h,float r,float g,float b,int colorBase)
-{
-    glColor3f(r,g,b); s1_rect(x,0,w,h);
-    glColor3f(r*1.2f,g*1.2f,b*1.2f); glLineWidth(1.5f);
+void drawBuilding(float x, float w, float h, float r, float g, float b, int colorBase, float nightFactor) {
+    glColor3f(r, g, b);
+    drawRect2D(x, 0, w, h);
+    glColor3f(r*1.2f, g*1.2f, b*1.2f);
+    glLineWidth(1.5f);
     glBegin(GL_LINE_STRIP);
-    glVertex2f(x-w/2,0); glVertex2f(x-w/2,h);
-    glVertex2f(x+w/2,h); glVertex2f(x+w/2,0);
+    glVertex2f(x - w/2, 0);
+    glVertex2f(x - w/2, h);
+    glVertex2f(x + w/2, h);
+    glVertex2f(x + w/2, 0);
     glEnd();
 
-    float winW=0.28f,winH=0.35f;
-    int rows=(int)(h/1.1f); if(rows<1)rows=1;
-    int cols=(int)(w/0.9f); if(cols<1)cols=1;
-    float startX=x-w/2+0.5f;
+    float winW = 0.28f, winH = 0.35f;
+    int rows = (int)(h / 1.1f);
+    int cols = (int)(w / 0.9f);
+    if (rows < 1) rows = 1;
+    if (cols < 1) cols = 1;
+    float startX = x - w/2 + 0.5f;
 
-    for(int row=0;row<rows;row++){
-        for(int col=0;col<cols;col++){
-            float wy=0.5f+row*1.0f;
-            float wx=startX+col*0.9f;
-            if(wy>h-0.6f||wx>x+w/2-0.3f) continue;
-            int idx=(colorBase+row*cols*2+col*3)%s1_winColorCount;
-            if((row+col)%4==0)       glColor3f(1.0f,0.9f,0.5f);
-            else if((row+col)%7==0)  glColor3f(0.3f,0.3f,0.5f);
-            else                     glColor3fv(s1_winColors[idx]);
-            s1_rect(wx,wy,winW,winH);
-            glColor3f(0.2f,0.2f,0.25f); glLineWidth(1.0f);
+    for (int row = 0; row < rows; row++) {
+        for (int col = 0; col < cols; col++) {
+            float wy = 0.5f + row * 1.0f;
+            float wx = startX + col * 0.9f;
+            if (wy > h - 0.6f || wx > x + w/2 - 0.3f) continue;
+
+            int idx = (colorBase + row * cols * 2 + col * 3) % winColorCount;
+            float winR, winG, winB;
+            if ((row + col) % 4 == 0) {
+                winR = 1.0f; winG = 0.9f; winB = 0.5f;
+            } else if ((row + col) % 7 == 0) {
+                winR = 0.3f; winG = 0.3f; winB = 0.5f;
+            } else {
+                winR = winColors[idx][0];
+                winG = winColors[idx][1];
+                winB = winColors[idx][2];
+            }
+            if (nightFactor > 0.3f) {
+                winR = winR * (0.7f + nightFactor * 0.8f);
+                winG = winG * (0.5f + nightFactor * 0.6f);
+                winB = winB * (0.3f + nightFactor * 0.4f);
+            }
+            float brightness = 1.0f + nightFactor * 1.2f;
+            glColor3f(winR * brightness, winG * brightness, winB * brightness);
+            drawRect2D(wx, wy, winW, winH);
+
+            glColor3f(0.2f, 0.2f, 0.25f);
+            glLineWidth(1.0f);
             glBegin(GL_LINE_LOOP);
-            glVertex2f(wx-winW/2,wy); glVertex2f(wx+winW/2,wy);
-            glVertex2f(wx+winW/2,wy+winH); glVertex2f(wx-winW/2,wy+winH);
+            glVertex2f(wx - winW/2, wy);
+            glVertex2f(wx + winW/2, wy);
+            glVertex2f(wx + winW/2, wy + winH);
+            glVertex2f(wx - winW/2, wy + winH);
             glEnd();
         }
     }
 }
 
-static void s1_drawTree(float x,float y)
-{
-    glColor3f(0.55f,0.35f,0.2f);  s1_rect(x,y,0.25f,0.5f);
-    glColor3f(0.2f,0.6f,0.2f);    s1_circ(x,y+0.7f,0.45f,16);
-    glColor3f(0.25f,0.65f,0.25f); s1_circ(x,y+1.0f,0.4f,16);
-    glColor3f(0.3f,0.7f,0.3f);    s1_circ(x,y+1.25f,0.35f,16);
+void drawTree(float x, float y) {
+    glColor3f(0.55f, 0.35f, 0.2f);
+    drawRect2D(x, y, 0.25f, 0.8f);
+
+    glColor3f(0.2f, 0.6f, 0.2f);
+    drawCircle2D(x, y + 1.0f, 0.45f, 16);
+    glColor3f(0.25f, 0.65f, 0.25f);
+    drawCircle2D(x, y + 1.35f, 0.4f, 16);
+    glColor3f(0.3f, 0.7f, 0.3f);
+    drawCircle2D(x, y + 1.7f, 0.35f, 16);
 }
 
-static void s1_drawLampPost(float x,float y)
-{
-    glColor3f(0.4f,0.4f,0.45f); s1_rect(x,y,0.1f,1.2f);
-    glBegin(GL_LINES); glVertex2f(x,y+1.2f); glVertex2f(x+0.4f,y+1.2f); glEnd();
-    glColor4f(1.0f,0.9f,0.4f,0.3f); s1_circ(x+0.4f,y+1.2f,0.25f,16);
-    glColor3f(1.0f,0.8f,0.3f);      s1_circ(x+0.4f,y+1.2f,0.12f,12);
+void drawLampPost(float x, float y, float nightFactor) {
+    glColor3f(0.4f, 0.4f, 0.45f);
+    drawRect2D(x, y, 0.1f, 1.6f);
+
+    glBegin(GL_LINES);
+    glVertex2f(x, y + 1.6f);
+    glVertex2f(x + 0.4f, y + 1.6f);
+    glEnd();
+
+    float glowAlpha = 0.2f + nightFactor * 0.6f;
+    float glowRadius = 0.25f + nightFactor * 0.3f;
+    glColor4f(1.0f, 0.8f, 0.3f, glowAlpha);
+    drawCircle2D(x + 0.4f, y + 1.6f, glowRadius, 16);
+    glColor3f(1.0f, 0.9f, 0.4f);
+    drawCircle2D(x + 0.4f, y + 1.6f, 0.12f, 12);
 }
 
-static void s1_drawStairs()
-{
-    float startX=-7.0f,endX=-3.8f,startY=0.0f,endY=2.4f;
-    glColor3f(0.5f,0.5f,0.55f);
+void drawStairs() {
+    float startX = -7.0f, endX = -3.8f, startY = 0.0f, endY = 2.4f;
+    glColor3f(0.5f, 0.5f, 0.55f);
     glBegin(GL_QUADS);
-    glVertex2f(startX,startY); glVertex2f(endX,endY);
-    glVertex2f(endX,endY-0.25f); glVertex2f(startX+0.4f,startY);
+    glVertex2f(startX, startY);
+    glVertex2f(endX, endY);
+    glVertex2f(endX, endY - 0.25f);
+    glVertex2f(startX + 0.4f, startY);
     glEnd();
-    int ns=12;
-    float sw=(endX-startX)/ns, sh=(endY-startY)/ns;
-    for(int i=0;i<ns;i++)
-    {
-        float br=0.6f+(i/(float)ns)*0.3f;
-        glColor3f(br,br,br+0.05f);
-        s1_rect(startX+i*sw+sw/2.0f, startY+i*sh, sw*0.9f, sh);
+
+    int num_steps = 12;
+    float stepW = (endX - startX) / num_steps;
+    float stepH = (endY - startY) / num_steps;
+    for (int i = 0; i < num_steps; i++) {
+        float brightness = 0.6f + (i / (float)num_steps) * 0.3f;
+        glColor3f(brightness, brightness, brightness + 0.05f);
+        drawRect2D(startX + i * stepW + stepW/2.0f, startY + i * stepH, stepW * 0.9f, stepH);
     }
-    glColor3f(0.2f,0.2f,0.22f); glLineWidth(2.5f);
+
+    glColor3f(0.2f, 0.2f, 0.22f);
+    glLineWidth(2.5f);
     glBegin(GL_LINES);
-    glVertex2f(startX-0.1f,startY+0.9f); glVertex2f(endX+0.1f,endY+0.9f);
+    glVertex2f(startX - 0.1f, startY + 0.9f);
+    glVertex2f(endX + 0.1f, endY + 0.9f);
     glEnd();
-    for(int i=0;i<=ns;i+=3)
-        s1_rect(startX+i*sw-0.05f, startY+i*sh, 0.07f, 0.85f);
+
+    for (int i = 0; i <= num_steps; i += 3) {
+        drawRect2D(startX + i * stepW - 0.05f, startY + i * stepH, 0.07f, 0.85f);
+    }
 }
 
-static void s1_drawConnectingWalkway()
-{
-    float pSX=-3.6f,pEX=3.7f,pY=2.4f,pW=0.6f;
-    glColor3f(0.65f,0.65f,0.7f);
-    s1_rect((pSX+pEX)*0.5f, pY, pEX-pSX, pW);
-    glColor3f(0.3f,0.3f,0.35f); glLineWidth(2.0f);
+void drawConnectingWalkway() {
+    float pathStartX = -3.6f, pathEndX = 3.7f, pathY = 2.4f, pathWidth = 0.6f;
+    glColor3f(0.65f, 0.65f, 0.7f);
+    drawRect2D((pathStartX + pathEndX) * 0.5f, pathY, pathEndX - pathStartX, pathWidth);
+    glColor3f(0.3f, 0.3f, 0.35f);
+    glLineWidth(2.0f);
     glBegin(GL_LINES);
-    glVertex2f(pSX,pY);    glVertex2f(pEX,pY);
-    glVertex2f(pSX,pY+pW); glVertex2f(pEX,pY+pW);
+    glVertex2f(pathStartX, pathY);
+    glVertex2f(pathEndX,   pathY);
+    glVertex2f(pathStartX, pathY + pathWidth);
+    glVertex2f(pathEndX,   pathY + pathWidth);
     glEnd();
-    glColor3f(0.4f,0.4f,0.45f); glLineWidth(2.0f);
+    glColor3f(0.4f, 0.4f, 0.45f);
+    glLineWidth(2.0f);
     glBegin(GL_LINES);
-    for(float x=pSX;x<=pEX;x+=0.9f)
-    {
-        glVertex2f(x,pY+pW); glVertex2f(x,pY+pW+0.35f);
+    for (float x = pathStartX; x <= pathEndX; x += 0.9f) {
+        glVertex2f(x, pathY + pathWidth);
+        glVertex2f(x, pathY + pathWidth + 0.35f);
     }
     glEnd();
     glBegin(GL_LINES);
-    glVertex2f(pSX,pY+pW+0.35f); glVertex2f(pEX,pY+pW+0.35f);
+    glVertex2f(pathStartX, pathY + pathWidth + 0.35f);
+    glVertex2f(pathEndX,   pathY + pathWidth + 0.35f);
     glEnd();
 }
 
-static void s1_drawBillboard()
-{
-    float bX=-13.8f,bY=-0.2f;
-    glColor3f(0.4f,0.35f,0.25f); s1_rect(bX,bY,0.12f,2.2f);
-    float boardX=bX+0.65f, boardY=bY+2.0f;
-    glColor3f(0.0f,0.25f,0.0f); s1_rect(boardX,boardY,3.3f,0.85f);
-    glColor3f(1.0f,1.0f,1.0f);
-    s1_drawText("Uttara Center 700M",boardX-1.5f,boardY+0.6f);
-    s1_drawText("Mirpur 11KM",  boardX-0.9f,boardY+0.38f);
-    s1_drawText("N0 U-Turn",  boardX-0.9f,boardY+0.15f);
+void drawBillboard() {
+    float baseX = -13.8f, baseY = -0.2f;
+    glColor3f(0.4f, 0.35f, 0.25f);
+    drawRect2D(baseX, baseY, 0.12f, 2.2f);
+    float boardW = 2.3f, boardH = 0.85f, boardX = baseX + 0.65f, boardY = baseY + 2.0f;
+    glColor3f(0.0f, 0.25f, 0.0f);
+    drawRect2D(boardX, boardY, boardW, boardH);
+    glColor3f(1.0f, 1.0f, 1.0f);
+    drawText2D("AIUB 11KM", boardX - 0.7f, boardY + 0.6f);
+    drawText2D("Mirpur 3KM", boardX - 0.7f, boardY + 0.4f);
+    drawText2D("N0 U-Turn", boardX - 0.7f, boardY + 0.15f);
 }
 
-static void s1_drawStation()
-{
-    float xPos=6.3f, topY=2.4f;
-    glColor3f(0.3f,0.3f,0.35f); s1_rect(xPos,0.0f,5.2f,topY);
-    glColor3f(0.25f,0.4f,0.3f); s1_rect(0.0f,topY+1.2f,8.5f,0.35f);
-    glColor3f(0.3f,0.45f,0.35f);s1_rect(0.0f,topY+1.4f,8.0f,0.15f);
-    glColor3f(0.3f,0.3f,0.35f);
-    s1_rect(-3.5f,0,0.4f,topY+1.2f);
-    s1_rect( 3.1f,0,0.4f,topY+0.2f);
-    glColor3f(0.8f,0.75f,0.65f); s1_rect(xPos,topY,5.2f,5.2f);
-    for(int i=-1;i<=1;i++){
-        glColor3f(0.7f,0.8f,0.9f);
-        s1_rect(xPos+i*1.2f,topY+2.0f,0.9f,1.4f);
-        glColor3f(0.1f,0.1f,0.15f); glLineWidth(1.5f);
+void drawTower() {
+    float x = 12.2f;
+    float y = 0.0f;
+    float h = 5.2f;
+    glColor3f(0.5f, 0.45f, 0.4f);
+    drawRect2D(x, y, 0.9f, h);
+    glColor3f(0.6f, 0.55f, 0.5f);
+    drawRect2D(x, y + h, 1.2f, 0.2f);
+    glColor3f(0.7f, 0.2f, 0.1f);
+    glBegin(GL_TRIANGLES);
+    glVertex2f(x - 0.3f, y + h + 0.2f);
+    glVertex2f(x + 0.3f, y + h + 0.2f);
+    glVertex2f(x, y + h + 1.2f);
+    glEnd();
+    glColor3f(0.9f, 0.8f, 0.5f);
+    for (int i = 0; i < 3; i++) {
+        drawRect2D(x, y + 0.8f + i * 1.2f, 0.35f, 0.5f);
+    }
+}
+
+void drawStation(float nightFactor) {
+    float xPos = 6.3f, topY = 2.4f;
+    glColor3f(0.3f, 0.3f, 0.35f);
+    drawRect2D(xPos, 0.0f, 5.2f, topY);
+    glColor3f(0.25f, 0.4f, 0.3f);
+    drawRect2D(0.0f, topY + 1.2f, 8.5f, 0.35f);
+    glColor3f(0.3f, 0.45f, 0.35f);
+    drawRect2D(0.0f, topY + 1.4f, 8.0f, 0.15f);
+    glColor3f(0.3f, 0.3f, 0.35f);
+    drawRect2D(-3.5f, 0, 0.4f, topY + 1.2f);
+    drawRect2D(3.1f, 0, 0.4f, topY + 0.2f);
+    glColor3f(0.3f, 0.45f, 0.35f);
+    drawRect2D(xPos, topY, 5.2f, 5.2f);
+
+    for (int i = -1; i <= 1; i++) {
+        float winBright = 1.0f + nightFactor * 1.5f;
+        glColor3f(0.7f * winBright, 0.8f * winBright, 0.9f * winBright);
+        drawRect2D(xPos + i * 1.2f, topY + 2.0f, 0.9f, 1.4f);
+        glColor3f(0.1f, 0.1f, 0.15f);
+        glLineWidth(1.5f);
         glBegin(GL_LINE_LOOP);
-        glVertex2f(xPos+i*1.2f-0.45f,topY+2.0f);
-        glVertex2f(xPos+i*1.2f+0.45f,topY+2.0f);
-        glVertex2f(xPos+i*1.2f+0.45f,topY+3.4f);
-        glVertex2f(xPos+i*1.2f-0.45f,topY+3.4f);
+        glVertex2f(xPos + i * 1.2f - 0.45f, topY + 2.0f);
+        glVertex2f(xPos + i * 1.2f + 0.45f, topY + 2.0f);
+        glVertex2f(xPos + i * 1.2f + 0.45f, topY + 3.4f);
+        glVertex2f(xPos + i * 1.2f - 0.45f, topY + 3.4f);
         glEnd();
     }
-    glColor3f(0.7f,0.25f,0.35f); s1_rect(xPos,topY+4.0f,3.6f,0.8f);
-    glColor3f(0.9f,0.85f,0.7f);
-    s1_drawText("Uttara North",xPos-.90f,topY+4.5f);
-    glColor3f(0.9f,0.9f,0.6f);
-    s1_drawText("| MRT-6", xPos-.90f,topY+4.25f);
+    glColor3f(0.7f, 0.25f, 0.35f);
+    drawRect2D(xPos, topY + 4.0f, 3.6f, 0.8f);
+    glColor3f(0.9f, 0.85f, 0.7f);
+    drawText2D("Dhaka Metro", xPos - 0.90f, topY + 4.5f);
+    glColor3f(0.9f, 0.9f, 0.6f);
+    drawText2D("Uttara North", xPos - 0.90f, topY + 4.25f);
+
+    if (nightFactor > 0.3f) {
+        glColor4f(1.0f, 0.8f, 0.4f, nightFactor * 0.5f);
+        for (float lx = -2.0f; lx <= 5.0f; lx += 1.5f)
+            drawCircle2D(lx, topY + 1.0f, 0.3f, 12);
+    }
 }
 
-static void s1_drawMetroTrack()
-{
-    float tY=4.3f;
-    float pX[]={-13.0f,-7.0f,-1.0f,7.0f,11.0f};
-    for(int i=0;i<5;i++){
-        glColor3f(0.6f,0.6f,0.65f); s1_rect(pX[i],0,0.85f,tY);
+void drawMetroTrack() {
+    float trackY = 4.3f;
+    float pillarX[] = { -13.0f, -7.0f, -1.0f, 7.0f, 11.0f };
+    for (int i = 0; i < 5; i++) {
+        glColor3f(0.6f, 0.6f, 0.65f);
+        drawRect2D(pillarX[i], 0, 0.85f, trackY);
     }
-    glColor3f(0.45f,0.45f,0.5f); s1_rect(0,tY,35.0f,0.35f);
-    glColor3f(0.7f,0.7f,0.75f); glLineWidth(3.0f);
+    glColor3f(0.45f, 0.45f, 0.5f);
+    drawRect2D(0, trackY, 35.0f, 0.35f);
+    glColor3f(0.7f, 0.7f, 0.75f);
+    glLineWidth(3.0f);
     glBegin(GL_LINES);
-    for(float x=-14.5f;x<=14.5f;x+=0.5f){
-        glVertex2f(x,tY+0.1f); glVertex2f(x,tY+0.25f);
+    for (float x = -14.5f; x <= 14.5f; x += 0.5f) {
+        glVertex2f(x, trackY + 0.1f);
+        glVertex2f(x, trackY + 0.25f);
     }
     glEnd();
-    glColor3f(0.3f,0.2f,0.2f); glLineWidth(2.0f);
+    glColor3f(0.3f, 0.2f, 0.2f);
+    glLineWidth(2.0f);
     glBegin(GL_LINES);
-    glVertex2f(-15.0f,S1_WIRE_Y); glVertex2f(15.0f,S1_WIRE_Y);
+    glVertex2f(-15.0f, WIRE_Y);
+    glVertex2f(15.0f, WIRE_Y);
     glEnd();
-    glColor3f(0.4f,0.4f,0.4f);
-    for(int i=0;i<5;i++){
+    glColor3f(0.4f, 0.4f, 0.4f);
+    for (int i = 0; i < 5; i++) {
         glBegin(GL_LINES);
-        glVertex2f(pX[i],tY); glVertex2f(pX[i],S1_WIRE_Y);
+        glVertex2f(pillarX[i], trackY);
+        glVertex2f(pillarX[i], WIRE_Y);
         glEnd();
-        glColor3f(0.45f,0.45f,0.45f);
-        s1_rect(pX[i],S1_WIRE_Y-0.1f,0.15f,0.2f);
+        glColor3f(0.45f, 0.45f, 0.45f);
+        drawRect2D(pillarX[i], WIRE_Y - 0.1f, 0.15f, 0.2f);
     }
 }
 
-static void s1_drawMetroTrain(float x)
-{
-    float y=4.45f, tW=3.5f, tH=0.7f;
-    glColor3f(0.2f,0.6f,0.8f);  s1_rect(x,y,tW,tH);
-    glColor3f(0.9f,0.9f,0.9f);  s1_rect(x,y+0.25f,tW-0.2f,0.08f);
-    glColor3f(0.6f,0.8f,1.0f);
-    for(float dx=-1.2f;dx<=1.2f;dx+=0.8f) s1_rect(x+dx,y+0.35f,0.5f,0.25f);
-    glColor3f(1.0f,0.8f,0.2f);
-    s1_circ(x+tW/2-0.15f,y+0.15f,0.08f,8);
-    s1_circ(x-tW/2+0.15f,y+0.15f,0.08f,8);
-    glColor3f(0.3f,0.3f,0.3f); glLineWidth(1.5f);
+void drawTrainCompartment(float cx, float y, float nightFactor) {
+    float trainW = 3.5f, trainH = 0.7f;
+    glColor3f(0.2f, 0.6f, 0.8f);
+    drawRect2D(cx, y, trainW, trainH);
+
+    glColor3f(0.9f, 0.9f, 0.9f);
+    drawRect2D(cx, y + 0.25f, trainW - 0.2f, 0.08f);
+
+    float winW = 0.5f, winH = 0.25f;
+    float startX = cx - 1.2f;
+    for (int i = 0; i < 3; i++) {
+        float wx = startX + i * 0.8f;
+        float winBright = 1.0f + nightFactor * 1.2f;
+        glColor3f(0.8f * winBright, 0.9f * winBright, 1.0f * winBright);
+        drawRect2D(wx, y + 0.35f, winW, winH);
+    }
+
+    glColor3f(0.3f, 0.3f, 0.3f);
+    glLineWidth(1.5f);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(cx - trainW/2, y);
+    glVertex2f(cx + trainW/2, y);
+    glVertex2f(cx + trainW/2, y + trainH);
+    glVertex2f(cx - trainW/2, y + trainH);
+    glEnd();
+}
+
+void drawMetroTrain(float x, float nightFactor) {
+    float trainW = 3.5f;
+    float y = 4.45f;
+
+    drawTrainCompartment(x - trainW, y, nightFactor);
+    drawTrainCompartment(x, y, nightFactor);
+    drawTrainCompartment(x + trainW, y, nightFactor);
+
+    float frontX, rearX;
+    if (metroDirection == 1) {
+        frontX = x + trainW * 1.5f - 0.15f;
+        rearX  = x - trainW * 1.5f + 0.15f;
+    } else {
+        frontX = x - trainW * 1.5f + 0.15f;
+        rearX  = x + trainW * 1.5f - 0.15f;
+    }
+
+    float headBright = 0.7f + nightFactor * 1.5f;
+    glColor3f(1.0f, 0.8f * headBright, 0.2f * headBright);
+    drawCircle2D(frontX, y + 0.15f, 0.08f, 8);
+    drawCircle2D(rearX, y + 0.15f, 0.08f, 8);
+
+    if (nightFactor > 0.4f) {
+        glColor4f(1.0f, 0.7f, 0.2f, nightFactor * 0.6f);
+        drawCircle2D(frontX, y + 0.15f, 0.22f, 12);
+        drawCircle2D(rearX, y + 0.15f, 0.22f, 12);
+    }
+
+    glColor3f(0.3f, 0.3f, 0.3f);
+    glLineWidth(1.5f);
     glBegin(GL_LINES);
-    glVertex2f(x,y+tH); glVertex2f(x,S1_WIRE_Y);
+    glVertex2f(x, y + 0.7f);
+    glVertex2f(x, WIRE_Y);
     glEnd();
-    glColor3f(0.2f,0.2f,0.2f); s1_rect(x,y+tH-0.05f,0.08f,0.1f);
-    glColor3f(0.8f,0.2f,0.2f); s1_rect(x,S1_WIRE_Y-0.02f,0.5f,0.04f);
+    glColor3f(0.2f, 0.2f, 0.2f);
+    drawRect2D(x, y + 0.65f, 0.08f, 0.1f);
+    glColor3f(0.8f, 0.2f, 0.2f);
+    drawRect2D(x, WIRE_Y - 0.02f, 0.5f, 0.04f);
 }
 
-static void s1_drawCar(float x,float y,float r,float g,float b)
-{
-    glColor3f(r,g,b);         s1_rect(x,y+0.25f,1.8f,0.4f);
-    glColor3f(r*0.7f,g*0.7f,b*0.7f); s1_rect(x,y+0.55f,1.0f,0.35f);
-    glColor3f(0.6f,0.75f,0.9f);
-    s1_rect(x-0.4f,y+0.6f,0.45f,0.25f);
-    s1_rect(x+0.4f,y+0.6f,0.45f,0.25f);
-    glColor3f(0.1f,0.1f,0.12f);
-    s1_circ(x-0.6f,y+0.15f,0.22f,16); s1_circ(x+0.6f,y+0.15f,0.22f,16);
-    glColor3f(0.4f,0.4f,0.45f);
-    s1_circ(x-0.6f,y+0.15f,0.12f,8);  s1_circ(x+0.6f,y+0.15f,0.12f,8);
-    glColor3f(1.0f,0.9f,0.3f); s1_circ(x+0.85f,y+0.3f,0.08f,8);
-    glColor3f(0.9f,0.2f,0.2f); s1_circ(x-0.85f,y+0.3f,0.08f,8);
+void drawCar(float x, float y, float r, float g, float b, float nightFactor) {
+    glColor3f(r, g, b);
+    drawRect2D(x, y + 0.25f, 1.8f, 0.4f);
+    glColor3f(r*0.7f, g*0.7f, b*0.7f);
+    drawRect2D(x, y + 0.55f, 1.0f, 0.35f);
+    glColor3f(0.6f, 0.75f, 0.9f);
+    drawRect2D(x - 0.4f, y + 0.6f, 0.45f, 0.25f);
+    drawRect2D(x + 0.4f, y + 0.6f, 0.45f, 0.25f);
+    glColor3f(0.1f, 0.1f, 0.12f);
+    drawCircle2D(x - 0.6f, y + 0.15f, 0.22f, 16);
+    drawCircle2D(x + 0.6f, y + 0.15f, 0.22f, 16);
+    glColor3f(0.4f, 0.4f, 0.45f);
+    drawCircle2D(x - 0.6f, y + 0.15f, 0.12f, 8);
+    drawCircle2D(x + 0.6f, y + 0.15f, 0.12f, 8);
+
+    float lightIntensity = 0.5f + nightFactor * 1.0f;
+    glColor3f(1.0f, 0.9f, 0.3f * lightIntensity);
+    drawCircle2D(x + 0.85f, y + 0.3f, 0.08f, 8);
+    glColor3f(0.9f, 0.2f * lightIntensity, 0.2f * lightIntensity);
+    drawCircle2D(x - 0.85f, y + 0.3f, 0.08f, 8);
+
+    if (nightFactor > 0.5f) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glColor4f(1.0f, 0.8f, 0.4f, nightFactor * 0.35f);
+        glBegin(GL_TRIANGLES);
+        glVertex2f(x + 0.85f, y + 0.3f);
+        glVertex2f(x + 1.8f, y + 0.5f);
+        glVertex2f(x + 1.8f, y + 0.1f);
+        glEnd();
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    }
 }
 
-static void s1_drawPerson(float x,float y,float r,float g,float b,float size)
-{
-    glColor3f(0.2f,0.2f,0.25f);
-    s1_rect(x-0.08f*size,y, 0.08f*size,0.35f*size);
-    s1_rect(x+0.08f*size,y, 0.08f*size,0.35f*size);
-    glColor3f(r,g,b); s1_rect(x,y+0.35f*size, 0.28f*size,0.5f*size);
-    glColor3f(0.95f,0.85f,0.7f); s1_circ(x,y+0.95f*size,0.14f*size,16);
-    glColor3f(r,g,b); glLineWidth(3.0f);
+void drawPerson(float x, float y, float r, float g, float b, float size) {
+    glColor3f(0.2f, 0.2f, 0.25f);
+    drawRect2D(x - 0.08f * size, y, 0.08f * size, 0.35f * size);
+    drawRect2D(x + 0.08f * size, y, 0.08f * size, 0.35f * size);
+    glColor3f(r, g, b);
+    drawRect2D(x, y + 0.35f * size, 0.28f * size, 0.5f * size);
+    glColor3f(0.95f, 0.85f, 0.7f);
+    drawCircle2D(x, y + 0.95f * size, 0.14f * size, 16);
+    glColor3f(r, g, b);
+    glLineWidth(3.0f);
     glBegin(GL_LINES);
-    glVertex2f(x-0.14f*size,y+0.75f*size); glVertex2f(x-0.35f*size,y+0.6f*size);
-    glVertex2f(x+0.14f*size,y+0.75f*size); glVertex2f(x+0.35f*size,y+0.6f*size);
+    glVertex2f(x - 0.14f * size, y + 0.75f * size);
+    glVertex2f(x - 0.35f * size, y + 0.6f * size);
+    glVertex2f(x + 0.14f * size, y + 0.75f * size);
+    glVertex2f(x + 0.35f * size, y + 0.6f * size);
     glEnd();
-    glColor3f(0.95f,0.85f,0.7f);
-    s1_circ(x-0.35f*size,y+0.6f*size,0.06f*size,8);
-    s1_circ(x+0.35f*size,y+0.6f*size,0.06f*size,8);
+    glColor3f(0.95f, 0.85f, 0.7f);
+    drawCircle2D(x - 0.35f * size, y + 0.6f * size, 0.06f * size, 8);
+    drawCircle2D(x + 0.35f * size, y + 0.6f * size, 0.06f * size, 8);
 }
 
-//scene-1 draw overlay hint
-static void s1_drawHint()
-{
-    glColor4f(0.0f,0.0f,0.0f,0.55f);
-    glBegin(GL_QUADS);
-    glVertex2f(-15.0f,-2.0f); glVertex2f(15.0f,-2.0f);
-    glVertex2f(15.0f,-1.65f); glVertex2f(-15.0f,-1.65f);
-    glEnd();
-    glColor3f(1.0f,1.0f,0.6f);
-    s1_drawText("SCENE 1: Outdoor  |  Press SPACE or N for Scene 2 (Ticket Machine)",
-                -8.5f, -1.93f);
+void update(int value) {
+    cycleAngle += 0.0075f;
+    if (cycleAngle > 2.0f * S1_PI) cycleAngle -= 2.0f * S1_PI;
+    sunAltitude = sin(cycleAngle);
+    nightFactor = (sunAltitude < 0.0f) ? -sunAltitude : 0.0f;
+    if (nightFactor > 1.0f) nightFactor = 1.0f;
+    if (sunAltitude > -0.15f && sunAltitude < 0.15f) nightFactor = nightFactor * 0.6f;
+
+    car1Pos += 0.08f;
+    if (car1Pos > 16.0f) car1Pos = -16.0f;
+    car2Pos -= 0.06f;
+    if (car2Pos < -16.0f) car2Pos = 16.0f;
+
+    metroPos += 0.035f * metroDirection;
+    if (metroPos > 14.0f || metroPos < -14.0f) {
+        metroDirection *= -1;
+        metroPos += metroDirection * 0.035f;
+    }
+
+    for (int i = 0; i < MAX_CLOUDS; i++) {
+        clouds[i].x += clouds[i].speed;
+        if (clouds[i].x > 18.0f) clouds[i].x = -18.0f;
+        if (clouds[i].x < -18.0f) clouds[i].x = 18.0f;
+    }
+
+    for (int i = 0; i < MAX_PEOPLE; i++) {
+        people[i].pos += people[i].speed;
+        if (people[i].pos > 14.5f || people[i].pos < -14.5f)
+            people[i].speed *= -1;
+    }
+
+    for (int i = 0; i < MAX_STAIR_PEOPLE; i++) {
+        StairPerson* sp = &stairPeople[i];
+        switch (sp->phase) {
+            case 0:
+                sp->progress += sp->speed;
+                if (sp->progress >= 1.0f) {
+                    sp->progress = 0.0f;
+                    sp->phase = 1;
+                } else {
+                    float t = sp->progress;
+                    sp->x = -7.0f + t * 3.2f;
+                    sp->y = 0.0f + t * 2.4f;
+                }
+                break;
+            case 1:
+                sp->progress += sp->speed;
+                if (sp->progress >= 1.0f) {
+                    sp->progress = 0.0f;
+                    sp->phase = 2;
+                } else {
+                    sp->x = -3.6f + sp->progress * 8.6f;
+                    sp->y = 2.4f;
+                }
+                break;
+            case 2:
+                sp->x = -7.0f;
+                sp->y = 0.0f;
+                sp->phase = 0;
+                sp->progress = 0.0f;
+                break;
+        }
+    }
 }
 
-//scene-1 display
-static void s1_display()
-{
-    glClearColor(0.5f,0.7f,1.0f,1.0f);
+void display() {
     glClear(GL_COLOR_BUFFER_BIT);
     glLoadIdentity();
 
-    s1_drawSkyGradient();
-    s1_drawSun();
-    for(int i=0;i<S1_MAX_CLOUDS;i++)
-        s1_drawCloud(s1_clouds[i].x,s1_clouds[i].y,s1_clouds[i].size,s1_clouds[i].alpha);
+    drawSkyDynamic();
 
-    s1_drawBackground();
+    float sunX = 12.0f * cos(cycleAngle);
+    float sunY = 2.0f + 6.5f * sin(cycleAngle);
+    float moonX = 12.0f * cos(cycleAngle + S1_PI);
+    float moonY = 2.0f + 6.5f * sin(cycleAngle + S1_PI);
 
-    s1_drawBuilding(-11.0f,8.2f,5.5f,0.5f,0.55f,0.6f,40);
-    s1_drawBuilding( -4.5f,4.8f,7.8f,0.6f,0.5f, 0.45f,30);
-    s1_drawBuilding( -1.0f,3.0f,6.5f,0.35f,0.55f,0.5f,0);
-    s1_drawBuilding(  5.5f,10.5f,3.0f,0.55f,0.45f,0.5f,55);
-    s1_drawBuilding( 13.0f,4.5f,7.0f,0.7f, 0.55f,0.45f,40);
+    if (sunAltitude > 0.05f) {
+        drawSun(sunX, sunY, sunAltitude);
+    } else {
+        if (sin(cycleAngle + S1_PI) > 0.05f && nightFactor > 0.3f)
+            drawMoon(moonX, moonY);
+        drawStars(nightFactor * 0.9f);
+    }
 
-    s1_drawMetroTrack();
-    s1_drawMetroTrain(s1_metroPos);
-    s1_drawStation();
-    s1_drawStairs();
-    s1_drawConnectingWalkway();
+    for (int i = 0; i < MAX_CLOUDS; i++)
+        drawCloud(clouds[i].x, clouds[i].y, clouds[i].size, clouds[i].alpha * (1.0f - nightFactor * 0.5f));
 
-    for(int i=0;i<S1_MAX_LAMPS;i++) s1_drawLampPost(s1_lamps[i].x,s1_lamps[i].y);
+    drawBackground();
 
-    float treeX[]={-11.0f,-2.0f,2.5f,8.0f,13.0f};
-    for(int i=0;i<5;i++) s1_drawTree(treeX[i],-0.3f);
+    drawBuilding(-11.0f, 8.2f, 5.5f, 0.5f, 0.55f, 0.6f, 40, nightFactor);
+    drawBuilding(-4.5f, 4.8f, 7.8f, 0.6f, 0.5f, 0.45f, 30, nightFactor);
+    drawBuilding(-1.0f, 3.0f, 6.5f, 0.35f, 0.55f, 0.5f, 0, nightFactor);
+    drawBuilding(5.5f, 10.5f, 3.0f, 0.55f, 0.45f, 0.5f, 55, nightFactor);
+    drawBuilding(13.0f, 4.5f, 7.0f, 0.7f, 0.55f, 0.45f, 40, nightFactor);
 
-    s1_drawBillboard();
+    drawMetroTrack();
+    drawMetroTrain(metroPos, nightFactor);
+    drawStation(nightFactor);
+    drawStairs();
+    drawConnectingWalkway();
 
-    for(int i=0;i<S1_MAX_PEOPLE;i++)
-        s1_drawPerson(s1_people[i].pos,0.0f,
-                      s1_people[i].r,s1_people[i].g,s1_people[i].b,
-                      s1_people[i].size);
+    for (int i = 0; i < MAX_LAMPS; i++)
+        drawLampPost(lamps[i].x, lamps[i].y, nightFactor);
 
-    s1_drawCar(s1_car1Pos,-1.0f,0.25f,0.65f,0.85f);
-    s1_drawCar(s1_car2Pos,-2.1f,0.85f,0.35f,0.25f);
+    float treePositions[] = {-11.0f, -2.0f, 2.5f, 8.0f, 13.0f};
+    for (int i = 0; i < 5; i++) drawTree(treePositions[i], -0.3f);
 
-    s1_drawHint();
+    drawBillboard();
+    drawTower();
+
+    for (int i = 0; i < MAX_PEOPLE; i++)
+        drawPerson(people[i].pos, 0.0f, people[i].r, people[i].g, people[i].b, people[i].size);
+
+    for (int i = 0; i < MAX_STAIR_PEOPLE; i++)
+        drawPerson(stairPeople[i].x, stairPeople[i].y, stairPeople[i].r, stairPeople[i].g, stairPeople[i].b, stairPeople[i].size);
+
+    drawCar(car1Pos, -1.0f, 0.25f, 0.65f, 0.85f, nightFactor);
+    drawCar(car2Pos, -2.1f, 0.85f, 0.35f, 0.25f, nightFactor);
+
     glutSwapBuffers();
 }
 
-//scene-1 update (timer tick)
-static void s1_step(){
-    s1_car1Pos += 0.1f;  if(s1_car1Pos> 16.0f) s1_car1Pos=-16.0f;
-    s1_car2Pos -= 0.08f; if(s1_car2Pos<-16.0f) s1_car2Pos= 16.0f;
-
-    s1_metroPos += 0.045f*s1_metroDir;
-    if(s1_metroPos>14.0f||s1_metroPos<-14.0f){
-        s1_metroDir*=-1; s1_metroPos+=s1_metroDir*0.045f;
-    }
-    for(int i=0;i<S1_MAX_CLOUDS;i++)
-    {
-        s1_clouds[i].x+=s1_clouds[i].speed;
-        if(s1_clouds[i].x> 18.0f) s1_clouds[i].x=-18.0f;
-        if(s1_clouds[i].x<-18.0f) s1_clouds[i].x= 18.0f;
-    }
-    for(int i=0;i<S1_MAX_PEOPLE;i++)
-    {
-        s1_people[i].pos+=s1_people[i].speed;
-        if(s1_people[i].pos>14.5f||s1_people[i].pos<-14.5f)
-            s1_people[i].speed*=-1;
-    }
-}
-
-//scene-1 projection
-static void s1_setProjection(int w,int h){
-    glViewport(0,0,w,h);
-    glMatrixMode(GL_PROJECTION); glLoadIdentity();
-    gluOrtho2D(-15.0,15.0,-2.0,10.0);
+void reshape(int w, int h) {
+    glViewport(0, 0, w, h);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluOrtho2D(-15.0, 15.0, -2.0, 10.0);
     glMatrixMode(GL_MODELVIEW);
 }
 
+void initGL() {
+    glClearColor(0.02f, 0.03f, 0.08f, 1.0f);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_LINE_SMOOTH);
+    glEnable(GL_POINT_SMOOTH);
+    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+    glHint(GL_POINT_SMOOTH_HINT, GL_NICEST);
+    glLineWidth(1.2f);
+}
 
-/* ============================================================
-   ============================================================
-   SCENE 2 – MRT-6 TICKET VENDING MACHINE INTERIOR
-   (All identifiers prefixed  s2_  to avoid clashes)
-   ============================================================
-   ============================================================ */
+}
 
-static const int   S2_WW = 1100;
-static const int   S2_WH = 680;
+static const int   WW = 1350;
+static const int   WH = 680;
+static const float PI = 3.14159265f;
+static float gTime=0,lastTime=0;
+
+static const float ATM_CX = 1180.f;
+static const float ATM_W  = 90.f;
+static const float ATM_H  = 200.f;
+
+static bool gFireAlarm = false;
+static float gAlarmFlash = 0.f;
+
+struct XWalker {
+    float x, y;
+    float wc;
+    int   dir;
+    float cr, cg, cb, skR;
+    float speed;
+};
+static const int NXW = 5;
+static XWalker XW[NXW];
+
+static void col3(float r,float g,float b){glColor3f(r,g,b);}
+static void col4(float r,float g,float b,float a){glColor4f(r,g,b,a);}
+
+static void quad(float x,float y,float w,float h){
+    glBegin(GL_QUADS);
+    glVertex2f(x,y); glVertex2f(x+w,y);
+    glVertex2f(x+w,y+h); glVertex2f(x,y+h);
+    glEnd();
+}
+static void gquad(float x,float y,float w,float h,
+                  float r0,float g0,float b0,
+                  float r1,float g1,float b1){
+    glBegin(GL_QUADS);
+    glColor3f(r0,g0,b0); glVertex2f(x,y);   glVertex2f(x+w,y);
+    glColor3f(r1,g1,b1); glVertex2f(x+w,y+h); glVertex2f(x,y+h);
+    glEnd();
+}
+static void circ(float cx,float cy,float r,int s=24){
+    glBegin(GL_TRIANGLE_FAN); glVertex2f(cx,cy);
+    for(int i=0;i<=s;i++){float a=2*PI*i/s;
+        glVertex2f(cx+cosf(a)*r,cy+sinf(a)*r);}
+    glEnd();
+}
+static void ocirc(float cx,float cy,float r,int s,float lw){
+    glLineWidth(lw); glBegin(GL_LINE_LOOP);
+    for(int i=0;i<s;i++){float a=2*PI*i/s;
+        glVertex2f(cx+cosf(a)*r,cy+sinf(a)*r);}
+    glEnd(); glLineWidth(1);
+}
+static void rrcorner(float cx,float cy,float r,float sa){
+    glBegin(GL_TRIANGLE_FAN); glVertex2f(cx,cy);
+    for(int i=0;i<=8;i++){float a=sa+i*(PI/2)/8;
+        glVertex2f(cx+cosf(a)*r,cy+sinf(a)*r);}
+    glEnd();
+}
+static void rrect(float x,float y,float w,float h,float r){
+    if(r<=0){quad(x,y,w,h);return;}
+    quad(x+r,y,w-2*r,h); quad(x,y+r,r,h-2*r); quad(x+w-r,y+r,r,h-2*r);
+    rrcorner(x+r,y+r,r,PI);     rrcorner(x+w-r,y+r,r,1.5f*PI);
+    rrcorner(x+w-r,y+h-r,r,0); rrcorner(x+r,y+h-r,r,0.5f*PI);
+}
+static void txt(float x,float y,const char*s,void*f=GLUT_BITMAP_HELVETICA_12){
+    glRasterPos2f(x,y); for(;*s;s++) glutBitmapCharacter(f,*s);
+}
+
+static const float FLOOR_Y = 200.f;
+static const float MW      = 112.f;
+static const float MH      = 240.f;
+static const float MY      = FLOOR_Y;
+static const float MGAP    = 178.f;
+static float MCX[3];
+
+struct Person {
+    float x,y;
+    float stopX;
+    float queueSlotX;
+    int   machIdx;
+    int   phase;
+    float timer;
+    float wc;
+    float armR,armL;
+    float headTilt;
+    bool  hasTicket;
+    bool  billVis;
+    float billX,billY,billTargX;
+    float procAngle;
+    float screenGlow;
+    float sr,sg,sb;
+    float skR;
+    const char* dest;
+    const char* fare;
+    float ticketDelay;
+    float delayTimer;
+    float leaveDelay;
+};
+
+static const int NP = 3;
+static Person P[NP];
+
+static void initPerson(int i){
+    Person &p = P[i];
+    p.machIdx = i;
+    p.x       = -60.f - i*22.f;
+    p.y       = FLOOR_Y - 18.f;
+    p.phase=0; p.timer=0; p.wc=0;
+    p.armR=0; p.armL=0; p.headTilt=0;
+    p.hasTicket=false; p.billVis=false;
+    p.billX=0; p.billY=0; p.billTargX=0;
+    p.procAngle=0; p.screenGlow=0;
+    static const float delays[3] = {0.f, 3.0f, 6.0f};
+    p.ticketDelay = delays[i];
+    p.delayTimer  = 0.f;
+    static const float leavedelays[3] = {0.f, 2.0f, 4.0f};
+    p.leaveDelay = leavedelays[i];
+    static const float shirts[3][3]={
+        {0.16f,0.26f,0.56f},
+        {0.52f,0.16f,0.16f},
+        {0.14f,0.40f,0.22f}
+    };
+    p.sr=shirts[i][0]; p.sg=shirts[i][1]; p.sb=shirts[i][2];
+    static const float skins[3]={0.72f,0.65f,0.76f};
+    p.skR=skins[i];
+
+    static const char* dests[3]={"Motijheel","Farmgate","Pallabi"};
+    static const char* fares[3]={"40 BDT",   "30 BDT",  "15 BDT"};
+    p.dest=dests[i]; p.fare=fares[i];
+
+    p.queueSlotX = -300.f - i*42.f;
+}
+
+struct Queuer{
+    float x,y,cr,cg,cb,skR,fidgetT;
+    bool  fidget;
+    float walkWC;
+    int   walkDir;
+    float minX,maxX;
+};
+static Queuer QP[2];
+static void initQueuers(){
+    QP[0]={120.f, FLOOR_Y-18.f, 0.50f,0.28f,0.55f, 0.68f, 0, false, 0, 1, 60.f,300.f};
+    QP[1]={220.f, FLOOR_Y-18.f, 0.72f,0.54f,0.16f, 0.73f, 0, false, 1.6f,-1, 60.f,300.f};
+}
+
+static int gPurchaseCount = 0;
+
+struct QLPerson {
+    float x, y;
+    float wc;
+    int   phase;
+    float timer;
+    float slotX;
+    float stopX;
+    int   machIdx;
+    bool  fromBottom;
+    float spawnX;
+    float spawnY;
+    float armR, armL, headTilt;
+    bool  hasTicket;
+    bool  billVis;
+    float billX, billY, billTargX;
+    float procAngle, screenGlow;
+    float sr, sg, sb, skR;
+    const char* dest;
+    const char* fare;
+};
+
+static const int NQL = 8;
+static QLPerson QL[NQL];
+
+static float qlSlotX[NQL+NP];
+
+static void initQL(){
+    float frontSlot = MCX[0] - 68.f - 200.f;
+    for(int i=0;i<NQL+NP;i++) qlSlotX[i] = frontSlot - i*42.f;
+
+    static const float sh[4][3]={
+        {0.70f,0.20f,0.20f},
+        {0.15f,0.15f,0.55f},
+        {0.60f,0.40f,0.10f},
+        {0.20f,0.48f,0.30f}
+    };
+    static const float sk[4]={0.74f,0.67f,0.71f,0.76f};
+    static const char* ds[4]={"Motijheel","Pallabi","Farmgate","Agargaon"};
+    static const char* fs[4]={"40 BDT","15 BDT","30 BDT","20 BDT"};
+
+    for(int i=0;i<NQL;i++){
+        int cIdx = i % 4;
+        QL[i].sr=sh[cIdx][0]; QL[i].sg=sh[cIdx][1]; QL[i].sb=sh[cIdx][2];
+        QL[i].skR=sk[cIdx];
+        QL[i].dest=ds[cIdx];  QL[i].fare=fs[cIdx];
+        QL[i].wc=i*0.7f;
+        QL[i].timer=0;
+        QL[i].slotX=qlSlotX[i];
+        QL[i].armR=0; QL[i].armL=0;
+        QL[i].headTilt=0;
+        QL[i].hasTicket=false; QL[i].billVis=false;
+        QL[i].billX=0; QL[i].billY=0; QL[i].billTargX=0;
+        QL[i].procAngle=0; QL[i].screenGlow=0;
+        QL[i].machIdx=i%3;
+        QL[i].stopX = MCX[i%3] - 68.f;
+
+        if(i % 2 == 0){
+            QL[i].fromBottom = false;
+            QL[i].spawnX = -120.f - i*40.f;
+            QL[i].spawnY = FLOOR_Y - 18.f;
+        } else {
+            QL[i].fromBottom = true;
+            QL[i].spawnX = qlSlotX[i] + (rand()%60-30);
+            QL[i].spawnY = -120.f - i*30.f;
+        }
+        QL[i].x      = QL[i].spawnX;
+        QL[i].y      = QL[i].spawnY;
+        QL[i].phase  = 0;
+    }
+
+    for(int i=0;i<NP;i++){
+        P[i].queueSlotX = qlSlotX[NQL + i];
+        P[i].stopX      = P[i].queueSlotX;
+    }
+}
+
+static void drawPerson(float px,float py,float wc,int ph,
+                       float armR_,float armL_,float ht,
+                       float sr,float sg,float sb,float skR,
+                       bool walking,bool hasTicket,
+                       const char*dest,const char*fare);
+
+static void drawQLPerson(QLPerson&q){
+    bool walking = (q.phase==0 || q.phase==2 || q.phase==4);
+    int ph = 0;
+
+    if(walking) {
+        ph = (q.phase==4) ? 7 : 0;
+    } else if (q.phase == 3) {
+        if (q.timer < 2.5f) ph = 3;
+        else if (q.timer < 5.0f) ph = 4;
+        else if (q.timer < 6.5f) ph = 5;
+        else if (q.timer < 9.7f) ph = 6;
+        else ph = 7;
+    } else {
+        ph = 5;
+    }
+
+    drawPerson(q.x, q.y, q.wc, ph,
+               q.armR, q.armL, q.headTilt,
+               q.sr, q.sg, q.sb, q.skR,
+               walking, q.hasTicket, q.dest, q.fare);
+}
+
+static void drawQueueLine(){
+    float qStart = qlSlotX[NQL-1] - 20.f;
+    float qEnd   = qlSlotX[0]     + 20.f;
+    float ropeY  = FLOOR_Y - 18.f + 55.f;
+    col3(0.60f,0.50f,0.12f);
+    quad(qStart-2, FLOOR_Y-18.f, 4, 36);
+    circ(qStart,   FLOOR_Y-18.f+36, 4, 10);
+    quad(qEnd-2,   FLOOR_Y-18.f, 4, 36);
+    circ(qEnd,     FLOOR_Y-18.f+36, 4, 10);
+
+    col3(0.65f,0.05f,0.10f);
+    glLineWidth(2.5f);
+    glBegin(GL_LINE_STRIP);
+    int segs=60;
+    for(int s=0;s<=segs;s++){
+        float t=(float)s/segs;
+        float rx=qStart + t*(qEnd-qStart);
+        float ry=ropeY  + sinf(t*5.f + gTime*0.8f)*4.f;
+        glVertex2f(rx,ry);
+    }
+    glEnd(); glLineWidth(1);
+
+    col4(0.04f,0.04f,0.08f,0.85f);
+    rrect(qStart+4, FLOOR_Y-18.f+40, 82, 14, 3);
+    col3(0.93f,0.72f,0.04f);
+    txt(qStart+8, FLOOR_Y-18.f+44, "Queue Here", GLUT_BITMAP_HELVETICA_10);
+}
+
+static void updateQLPerson(QLPerson&q, float dt){
+    q.timer += dt;
+
+    switch(q.phase){
+
+    case 0:
+        q.wc += dt*3.0f;
+
+        if(q.y < FLOOR_Y-18.f) {
+            q.y += 55.f * dt;
+            float dx = q.slotX - q.x;
+            if(fabsf(dx) > 3.f) q.x += (dx > 0 ? 1.f : -1.f) * 40.f * dt;
+        }
+        else {
+            q.y = FLOOR_Y-18.f;
+            float dx = q.slotX - q.x;
+            if(dx > 2.f) {
+                q.x += 50.f * dt;
+            } else if(dx < -2.f) {
+                q.x -= 50.f * dt;
+            } else {
+                q.x = q.slotX;
+                q.phase = 1; q.timer = 0; q.wc = 0;
+            }
+        }
+        break;
+
+    case 1:
+        q.wc += dt*0.8f;
+        break;
+
+    case 2:
+        q.wc += dt*3.0f;
+        {
+          float dx = q.stopX - q.x;
+          if(dx > 2.f) { q.x += 65.f * dt; }
+          else if(dx < -2.f) { q.x -= 65.f * dt; }
+          else { q.x = q.stopX; q.wc = 0; q.phase = 3; q.timer = 0; }
+        }
+        break;
+
+    case 3:
+        if(q.timer < 2.5f){
+            q.headTilt  += (12.f-q.headTilt)*dt*2.f;
+            q.armR      += (14.f-q.armR)*dt*1.5f;
+            q.screenGlow+= (0.30f-q.screenGlow)*dt*2.f;
+        } else if(q.timer < 5.5f){
+            q.armR+=(36.f-q.armR)*dt*2.5f;
+            if(q.timer>3.0f && !q.billVis){
+                q.billVis=true;
+                q.billY     = MY+91.f;
+                q.billX     = q.x+18.f;
+                q.billTargX = MCX[q.machIdx]-MW*0.5f+14.f;
+            }
+            if(q.billVis){
+                q.billX += (q.billTargX-q.billX)*dt*5.f;
+                if(fabsf(q.billX-q.billTargX)<1.5f) q.billVis=false;
+            }
+        } else if(q.timer < 7.5f){
+            float tgt=(q.timer<6.5f)?26.f:12.f;
+            q.armR+=(tgt-q.armR)*dt*4.f;
+            q.screenGlow+=(0.70f-q.screenGlow)*dt*5.f;
+            q.billVis = false;
+        } else if(q.timer < 10.7f){
+            q.procAngle += dt*3.5f;
+            q.armR      += (5.f-q.armR)*dt*1.5f;
+            q.screenGlow = 0.15f+sinf(q.procAngle*0.4f)*0.07f;
+        } else if(q.timer < 13.5f + (q.machIdx * 1.5f)){
+            float tgt=(q.timer<11.6f)?45.f:8.f;
+            q.armR+=(tgt-q.armR)*dt*2.5f;
+            if(q.timer>11.6f && !q.hasTicket){
+                q.hasTicket=true;
+                gPurchaseCount++;
+            }
+            q.headTilt+=(0.f-q.headTilt)*dt*2.f;
+        } else {
+            q.phase=4;
+            q.timer=0;
+            q.procAngle=0; q.screenGlow=0;
+        }
+        break;
+
+    case 4:
+        q.wc += dt*3.0f;
+        q.x  += 54.f*dt;
+        q.headTilt += (0.f-q.headTilt)*dt*2.f;
+        q.screenGlow=0;
+        if(q.x > WW+100){
+            q.fromBottom = (rand() % 2 == 0);
+
+            int inLine = 0;
+            for(int j=0; j<NQL; j++){
+                if(&QL[j] != &q && (QL[j].phase == 0 || QL[j].phase == 1)) {
+                    inLine++;
+                }
+            }
+            q.slotX = qlSlotX[inLine];
+        }
+        break;
+    }
+}
+
+static float machineCooldown[3] = {3.0f, 3.0f, 3.0f};
+
+static void updateQLQueue(float dt){
+    bool machOccupied[3] = {false, false, false};
+
+    for(int i=0; i<NP; i++){
+        if(P[i].phase >= 3 && P[i].phase <= 7) machOccupied[P[i].machIdx] = true;
+        if(P[i].phase == 2) machOccupied[P[i].machIdx] = true;
+    }
+
+    for(int i=0; i<NQL; i++){
+        if(QL[i].phase >= 2 && QL[i].phase <= 3) machOccupied[QL[i].machIdx] = true;
+    }
+
+    for(int m=0; m<3; m++){
+        if(!machOccupied[m]) machineCooldown[m] += dt;
+        else machineCooldown[m] = 0.f;
+    }
+
+    float bestDist = 1e9f;
+    int bestQLIdx  = -1;
+    int bestPIdx   = -1;
+
+    for(int i=0; i<NQL; i++){
+        if(QL[i].phase == 1){
+            float dist = fabsf(QL[i].slotX - qlSlotX[0]);
+            if(dist < bestDist){ bestDist=dist; bestQLIdx=i; bestPIdx=-1; }
+        }
+    }
+    for(int i=0; i<NP; i++){
+        if(P[i].phase == 1 && P[i].delayTimer >= P[i].ticketDelay){
+            float dist = fabsf(P[i].queueSlotX - qlSlotX[0]);
+            if(dist < bestDist){ bestDist=dist; bestPIdx=i; bestQLIdx=-1; }
+        }
+    }
+
+    if(bestDist < 5.f){
+        for(int m=0; m<3; m++){
+            if(!machOccupied[m] && machineCooldown[m] >= 3.0f){
+
+                if(bestQLIdx != -1){
+                    QL[bestQLIdx].machIdx = m;
+                    QL[bestQLIdx].stopX   = MCX[m] - 68.f;
+                    QL[bestQLIdx].phase   = 2;
+                    QL[bestQLIdx].timer   = 0;
+                } else if(bestPIdx != -1){
+                    P[bestPIdx].machIdx = m;
+                    P[bestPIdx].stopX   = MCX[m] - 68.f;
+                    P[bestPIdx].phase   = 2;
+                    P[bestPIdx].timer   = 0;
+                }
+
+                machOccupied[m]    = true;
+                machineCooldown[m] = 0.f;
+
+                for(int i=0; i<NQL; i++){
+                    if((QL[i].phase == 0 || QL[i].phase == 1) && i != bestQLIdx){
+                        for(int s=1; s<NQL+NP; s++){
+                            if(fabsf(QL[i].slotX - qlSlotX[s]) < 2.0f){
+                                QL[i].slotX = qlSlotX[s-1];
+                                QL[i].phase = 0;
+                                break;
+                            }
+                        }
+                    }
+                }
+                for(int i=0; i<NP; i++){
+                    if(P[i].phase == 1 && i != bestPIdx){
+                        for(int s=1; s<NQL+NP; s++){
+                            if(fabsf(P[i].queueSlotX - qlSlotX[s]) < 2.0f){
+                                P[i].queueSlotX = qlSlotX[s-1];
+                                P[i].phase = 0;
+                                break;
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    for(int i=0; i<NQL; i++) updateQLPerson(QL[i], dt);
+}
+
+static void initXWalkers(){
+    static const float shirts[5][3]={
+        {0.55f,0.20f,0.55f},
+        {0.62f,0.62f,0.15f},
+        {0.15f,0.50f,0.55f},
+        {0.55f,0.35f,0.15f},
+        {0.30f,0.30f,0.30f}
+    };
+    static const float skins[5]={0.73f,0.66f,0.78f,0.68f,0.74f};
+    float startXs[5]  ={  -60.f, 1420.f,  -130.f, 1350.f,  200.f };
+    int   dirs[5]     ={     1,     -1,       1,      -1,      1   };
+    float ys[5]       ={ FLOOR_Y-18.f, FLOOR_Y-14.f, FLOOR_Y-22.f,
+                         FLOOR_Y-16.f, FLOOR_Y-20.f };
+    float speeds[5]   ={ 46.f, 38.f, 55.f, 42.f, 50.f };
+    for(int i=0;i<NXW;i++){
+        XW[i].x    = startXs[i];
+        XW[i].y    = ys[i];
+        XW[i].wc   = i * 1.1f;
+        XW[i].dir  = dirs[i];
+        XW[i].cr   = shirts[i][0];
+        XW[i].cg   = shirts[i][1];
+        XW[i].cb   = shirts[i][2];
+        XW[i].skR  = skins[i];
+        XW[i].speed= speeds[i];
+    }
+}
+
+static void drawFireAlarm(float wx, float wy){
+    float flash = gFireAlarm ? (0.5f + sinf(gAlarmFlash*8.f)*0.5f) : 0.f;
+
+    col3(0.18f,0.18f,0.20f); rrect(wx-2, wy-2, 54, 82, 3);
+    col3(0.75f+flash*0.25f, 0.06f, 0.06f); rrect(wx, wy, 50, 78, 3);
+
+    col3(1,1,1);
+    txt(wx+12, wy+66, "FIRE",    GLUT_BITMAP_HELVETICA_10);
+    txt(wx+6, wy+53, "ALARM",   GLUT_BITMAP_HELVETICA_10);
+
+    col3(0.20f,0.20f,0.22f); rrect(wx+8, wy+28, 34, 22, 2);
+    if(gFireAlarm){
+        col3(1.f, 0.8f+flash*0.2f, 0.f);
+    } else {
+        col3(0.70f,0.70f,0.72f);
+    }
+    rrect(wx+10, wy+30, 30, 18, 2);
+    col3(0.10f,0.10f,0.12f);
+    txt(wx+9, wy+39, "BREAK", GLUT_BITMAP_HELVETICA_10);
+    txt(wx+9, wy+31 , "GLASS", GLUT_BITMAP_HELVETICA_10);
+
+    float ledR = gFireAlarm ? (0.8f+flash*0.2f) : 0.22f;
+    col3(ledR, gFireAlarm?0.f:0.55f, 0.f);
+    circ(wx+25, wy+14, 5, 10);
+
+    col3(0.14f,0.14f,0.15f);
+    for(int g=0;g<4;g++) quad(wx+8+g*9, wy+6, 6, 4);
+
+    if(gFireAlarm){
+        float br = 0.7f + flash*0.3f;
+        col4(br, br*0.6f, 0.f, 0.85f);
+        circ(wx+25, wy+90, 8, 12);
+        col4(1.f, 0.8f, 0.f, flash*0.3f);
+        circ(wx+25, wy+90, 22, 14);
+    } else {
+        col3(0.50f,0.25f,0.0f); circ(wx+25, wy+90, 8, 12);
+    }
+}
+
+static void drawATM(){
+    float x = ATM_CX - ATM_W*0.5f;
+    float y = FLOOR_Y;
+
+    col3(0.55f,0.55f,0.58f); quad(x-30,y,10,ATM_H+60);
+    col3(0.50f,0.50f,0.53f); quad(x+ATM_W+20,y,10,ATM_H+60);
+    col3(0.22f,0.22f,0.25f); quad(x-34,y+ATM_H+54, ATM_W+78, 18);
+    col3(0.93f,0.72f,0.04f); rrect(x+5, y+ATM_H+56, 50, 14, 3);
+    col3(0.08f,0.06f,0.02f); txt(x+12, y+ATM_H+60, "ATM", GLUT_BITMAP_HELVETICA_12);
+    col3(0.03f,0.30f,0.60f); rrect(x+57, y+ATM_H+56, 20, 14, 2);
+    col3(1,1,1); txt(x+60, y+ATM_H+60, "DB", GLUT_BITMAP_HELVETICA_10);
+
+    col4(0,0,0,0.10f);
+    for(int s=5;s>0;s--) rrect(x+s,y-s,ATM_W,ATM_H,8);
+
+    gquad(x,y,ATM_W,ATM_H, 0.18f,0.18f,0.20f, 0.26f,0.26f,0.28f);
+    rrect(x,y,ATM_W,ATM_H,8);
+    col3(0.30f,0.30f,0.32f); quad(x,y,3,ATM_H); quad(x+ATM_W-3,y,3,ATM_H);
+
+    float hy = y+ATM_H-40;
+    col3(0.03f,0.38f,0.60f); rrect(x+5,hy, ATM_W-10, 36, 5);
+    col3(1,1,1);
+    txt(x+9,  hy+22, "Dhaka Bank", GLUT_BITMAP_HELVETICA_10);
+    txt(x+12, hy+10, "ATM Booth",  GLUT_BITMAP_HELVETICA_10);
+
+    float sx=x+6, sy=y+115, sw=ATM_W-12, sh=72;
+    col3(0.08f,0.08f,0.10f); rrect(sx-2,sy-2,sw+4,sh+4,4);
+    float scr = 0.08f + sinf(gTime*0.6f)*0.03f;
+    col3(scr*0.3f, scr*0.5f, scr); rrect(sx,sy,sw,sh,3);
+    col3(0.82f,0.90f,1.f); txt(sx+4, sy+58, "Welcome!", GLUT_BITMAP_HELVETICA_12);
+    col3(0.65f,0.82f,1.f); txt(sx+3, sy+44, "Insert Card", GLUT_BITMAP_HELVETICA_10);
+    if((int)(gTime*2)%2==0){ col3(0.93f,0.72f,0.04f); quad(sx+4, sy+34, 12, 3); }
+    col3(0.50f,0.75f,1.f);
+    txt(sx+3, sy+16, "Balance Inquiry", GLUT_BITMAP_HELVETICA_10);
+    txt(sx+3, sy+5,  "Cash Withdraw",   GLUT_BITMAP_HELVETICA_10);
+
+    col3(0.12f,0.12f,0.14f); rrect(x+8, y+102, ATM_W-16, 10, 3);
+    col4(0,0,0,0.90f); quad(x+14, y+104, ATM_W-28, 5);
+    col3(0.52f,0.52f,0.52f); txt(x+9, y+96, "INSERT CARD", GLUT_BITMAP_HELVETICA_10);
+
+    col3(0.14f,0.14f,0.16f); rrect(x+8, y+48, ATM_W-16, 46, 4);
+    static const char* keys[]={"1","2","3","4","5","6","7","8","9","*","0","#"};
+    for(int k=0;k<12;k++){
+        float kx = x+14+(k%3)*22.f;
+        float ky = y+52+(k/3)*10.f;
+        float kglow = 0.22f + sinf(gTime*1.2f + k*0.5f)*0.04f;
+        col3(kglow, kglow, kglow*1.1f); rrect(kx,ky,14,8,2);
+        col3(0.80f,0.85f,0.90f); txt(kx+4,ky+2,keys[k],GLUT_BITMAP_HELVETICA_10);
+    }
+
+    col3(0.11f,0.11f,0.13f); rrect(x+8, y+14, ATM_W-16, 30, 4);
+    col4(0,0,0,0.85f); quad(x+16, y+24, ATM_W-32, 12);
+    col3(0.52f,0.52f,0.52f); txt(x+10, y+20, "Cash Dispenser", GLUT_BITMAP_HELVETICA_10);
+
+    col3(0.14f,0.14f,0.16f); rrect(x-8,y-8,ATM_W+16,12,3);
+
+    float ledG = 0.82f + sinf(gTime*1.4f)*0.12f;
+    col3(0.05f, ledG, 0.20f); circ(x+ATM_W-10, y+ATM_H-10, 3, 8);
+}
+
+static void drawXWalker(XWalker*xw){
+    float x=xw->x, y=xw->y;
+    float skG=xw->skR*0.71f, skB=xw->skR*0.50f;
+    float pr=0.12f,pg=0.12f,pb=0.18f;
+    float thigh=28.f, shin=24.f;
+    float hipY=y+thigh+shin;
+    float legSw = sinf(xw->wc)*15.f * xw->dir;
+    float lLeg  =  legSw;
+    float rLeg  = -legSw;
+    float lKnee = (lLeg<0) ? -lLeg*0.4f : 0;
+    float rKnee = (rLeg<0) ? -rLeg*0.4f : 0;
+    float armSw = sinf(xw->wc)*12.f;
+
+    col4(0.35f,0.32f,0.29f,0.20f);
+    glBegin(GL_TRIANGLE_FAN); glVertex2f(x,y+1);
+    for(int i=0;i<=12;i++){float a=(float)i/12*2*PI;
+        glVertex2f(x+cosf(a)*14,y+sinf(a)*3);}
+    glEnd();
+
+    glPushMatrix();
+    glTranslatef(x-5, hipY, 0); glRotatef(lLeg,0,0,1);
+    gquad(-4,-thigh,8,thigh, pr*0.88f,pg*0.88f,pb*0.88f, pr,pg,pb);
+    glTranslatef(0,-thigh,0); glRotatef(lKnee,0,0,1);
+    gquad(-3,-shin, 7,shin, pr*0.78f,pg*0.78f,pb*0.78f, pr*0.88f,pg*0.88f,pb*0.88f);
+    glTranslatef(0,-shin,0);
+    col3(0.08f,0.06f,0.05f); rrect(-5,-5,12,5,2);
+    glPopMatrix();
+
+    glPushMatrix();
+    glTranslatef(x+5, hipY, 0); glRotatef(rLeg,0,0,1);
+    gquad(-4,-thigh,8,thigh, pr*0.88f,pg*0.88f,pb*0.88f, pr,pg,pb);
+    glTranslatef(0,-thigh,0); glRotatef(rKnee,0,0,1);
+    gquad(-3,-shin, 7,shin, pr*0.78f,pg*0.78f,pb*0.78f, pr*0.88f,pg*0.88f,pb*0.88f);
+    glTranslatef(0,-shin,0);
+    col3(0.08f,0.06f,0.05f); rrect(-5,-5,12,5,2);
+    glPopMatrix();
+
+    float bBot=hipY-y, bTop=bBot+36.f;
+    gquad(x-10,y+bBot,20,36, xw->cr*0.86f,xw->cg*0.86f,xw->cb*0.86f, xw->cr,xw->cg,xw->cb);
+    rrect(x-10,y+bBot,20,36,3);
+
+    float shY=y+bTop-4;
+    for(int s=-1;s<=1;s+=2){
+        float sw = s * armSw * xw->dir;
+        glPushMatrix();
+        glTranslatef(x+s*9, shY, 0); glRotatef(sw,0,0,1);
+        col3(xw->cr,xw->cg,xw->cb); quad(-3,-16,7,16);
+        glTranslatef(0,-16,0); glRotatef(sw*0.3f,0,0,1);
+        col3(xw->cr,xw->cg,xw->cb); quad(-3,-14,7,14);
+        col3(xw->skR,skG,skB); rrect(-3,-21,7,7,1);
+        glPopMatrix();
+    }
+
+    col3(xw->skR,skG,skB); rrect(x-3,y+bTop,6,8,2);
+
+    float hcY=y+bTop+8+10.f;
+    col3(xw->skR,skG,skB); circ(x,hcY,11.f,20);
+    col3(0.07f,0.05f,0.05f);
+    glBegin(GL_TRIANGLE_FAN); glVertex2f(x,hcY);
+    for(int i=0;i<=13;i++){float a=PI*0.08f+(float)i/13*PI*1.04f;
+        glVertex2f(x+cosf(a)*11.f,hcY+sinf(a)*11.f);}
+    glEnd();
+    col3(0.04f,0.03f,0.03f); circ(x-3,hcY,1.3f,7); circ(x+3,hcY,1.3f,7);
+    col3(0.48f,0.26f,0.18f); glLineWidth(1.2f);
+    glBegin(GL_LINE_STRIP);
+    for(int i=0;i<=7;i++){float a=PI+(float)i/7*PI;
+        glVertex2f(x+cosf(a)*2.5f,hcY-5+sinf(a)*1.2f);}
+    glEnd(); glLineWidth(1);
+}
+
+static void drawStation(){
+    gquad(0,570,WW,110, 0.86f,0.86f,0.86f, 0.96f,0.96f,0.96f);
+    col3(0.75f,0.75f,0.75f);
+    for(int i=0;i<8;i++) quad(i*155.f,602,118,68);
+    col3(0.91f,0.91f,0.91f);
+    for(int i=0;i<8;i++) quad(i*155.f+118,585,37,85);
+    for(int i=0;i<10;i++){
+        float lx=55+i*105;
+        col3(0.72f,0.72f,0.72f); quad(lx-20,612,40,14);
+        float gl=0.91f+sinf(gTime*0.4f+i*0.8f)*0.04f;
+        col4(gl,gl,gl*0.90f,0.85f); quad(lx-16,613,32,11);
+        glBegin(GL_TRIANGLES);
+        col4(1,1,0.95f,0.06f); glVertex2f(lx,613);
+        col4(1,1,0.95f,0);     glVertex2f(lx-75,500); glVertex2f(lx+75,500);
+        glEnd();
+    }
+    gquad(0,FLOOR_Y,WW,380, 0.89f,0.88f,0.85f, 0.94f,0.93f,0.91f);
+    col3(0.04f,0.52f,0.22f); quad(0,385,WW,18);
+    col3(0.03f,0.40f,0.17f); quad(0,381,WW,5);
+    col3(0.04f,0.52f,0.22f); quad(0,558,WW,12);
+    glLineWidth(0.5f); col4(0,0,0,0.05f);
+    for(int tx=0;tx<WW;tx+=52){glBegin(GL_LINES);glVertex2f(tx,FLOOR_Y);glVertex2f(tx,410);glEnd();}
+    for(int ty=(int)FLOOR_Y;ty<410;ty+=46){glBegin(GL_LINES);glVertex2f(0,ty);glVertex2f(WW,ty);glEnd();}
+    glLineWidth(1);
+    for(int i=0;i<4;i++){
+        float px=130+i*270;
+        gquad(px-17,FLOOR_Y,34,400, 0.79f,0.79f,0.77f, 0.87f,0.87f,0.85f);
+        col3(0.04f,0.52f,0.22f); quad(px-17,383,34,20);
+        col4(0,0,0,0.07f); quad(px-17,FLOOR_Y,4,400); quad(px+13,FLOOR_Y,4,400);
+    }
+    gquad(0,0,WW,FLOOR_Y, 0.75f,0.73f,0.70f, 0.84f,0.83f,0.80f);
+    for(int tx=0;tx<WW/72+1;tx++)
+        for(int ty=0;ty<5;ty++){
+            float sh=0.79f+((tx+ty)%2)*0.05f;
+            col3(sh,sh*0.99f,sh*0.97f); quad(tx*72,ty*50,71,49);
+        }
+    col4(1,1,1,0.09f); quad(0,FLOOR_Y-6,WW,6);
+    col3(0.93f,0.77f,0.04f); quad(0,FLOOR_Y-14,WW,14);
+    col3(0.75f,0.61f,0.03f);
+    for(int d=0;d<56;d++) quad(d*20+4,FLOOR_Y-12,9,10);
+    col3(0.03f,0.45f,0.18f); rrect(14,588,200,34,5);
+    col3(1,1,1); txt(36,601,"Uttara North | MRT-6",GLUT_BITMAP_HELVETICA_12);
+    col3(0.50f,0.50f,0.50f); glLineWidth(1.4f);
+    glBegin(GL_LINES);
+    glVertex2f(WW/2-62,628); glVertex2f(WW/2-62,585);
+    glVertex2f(WW/2+62,628); glVertex2f(WW/2+62,585);
+    glEnd(); glLineWidth(1);
+    col3(0.03f,0.45f,0.18f); rrect(WW/2-84,564,168,26,4);
+    col3(1,1,1); txt(WW/2-76,572,"Ticket Vending Machine",GLUT_BITMAP_HELVETICA_12);
+    col3(0.70f,0.04f,0.04f); rrect(WW-160,588,94,28,4);
+    col3(1,1,1); txt(WW-146,598,"EXIT -->",GLUT_BITMAP_HELVETICA_12);
+    col3(0.24f,0.24f,0.24f); rrect(WW-58,600,40,18,3);
+    circ(WW-22,609,6,8); col3(0.08f,0.08f,0.08f); circ(WW-22,609,3,8);
+    col4(0.8f,0.1f,0.1f,0.8f+sinf(gTime*1.5f)*0.2f); circ(WW-45,604,3,6);
+
+    if(gFireAlarm){
+        float flash2 = 0.5f + sinf(gAlarmFlash*8.f)*0.5f;
+        col4(0.7f,0.0f,0.0f, flash2*0.15f);
+        quad(0,0,WW,WH);
+    }
+}
+
+static void drawMachine(float cx,float sGlow,float pAngle,bool active){
+    float x=cx-MW/2, y=MY;
+
+    col4(0,0,0,0.12f);
+    for(int s=6;s>0;s--) rrect(x+s,y-s,MW,MH,9);
+
+    gquad(x,y,MW,MH, 0.20f,0.20f,0.21f, 0.28f,0.28f,0.29f);
+    rrect(x,y,MW,MH,9);
+    col3(0.35f,0.35f,0.36f); quad(x,y,3,MH); quad(x+MW-3,y,3,MH);
+    col3(0.25f,0.25f,0.26f); rrect(x+5,y+5,MW-10,MH-10,7);
+
+    float hy = y+MH-46;
+    col3(0.04f,0.50f,0.20f); rrect(x+5,hy,MW-10,41,5);
+    col3(1,1,1); circ(x+18,hy+21,8,16);
+    col3(0.04f,0.50f,0.20f); circ(x+18,hy+21,5,16);
+    col3(1,1,1); txt(x+13,hy+18,"M",GLUT_BITMAP_HELVETICA_10);
+    col3(1,1,1);
+    txt(x+30,hy+30,"Ticket Vending",GLUT_BITMAP_HELVETICA_10);
+    txt(x+38,hy+17,"Machine",     GLUT_BITMAP_HELVETICA_10);
+
+    float sx=x+8, sy=y+118, sw=MW-16, sh=88;
+    col3(0.09f,0.09f,0.10f); rrect(sx-2,sy-2,sw+4,sh+4,4);
+    float sg2=active?(0.10f+sGlow*0.5f):0.07f;
+
+    if(active && pAngle>0.05f){
+        col3(sg2*0.2f,sg2*0.85f,sg2*0.5f); rrect(sx,sy,sw,sh,3);
+        col3(0.88f,0.95f,0.88f);
+        txt(sx+5,sy+70,"Processing...",GLUT_BITMAP_HELVETICA_10);
+        txt(sx+8,sy+55,"Please wait", GLUT_BITMAP_HELVETICA_10);
+        glLineWidth(2.8f); col3(0.10f,0.90f,0.45f);
+        glBegin(GL_LINE_STRIP);
+        for(int i=0;i<=22;i++){float a=pAngle+(float)i/22*(PI*1.6f);
+            glVertex2f(sx+sw/2+cosf(a)*13,sy+28+sinf(a)*13);}
+        glEnd(); glLineWidth(1);
+        col3(0.82f,1.f,0.85f);
+        txt(sx+6,sy+10,"Amount: 40 BDT",GLUT_BITMAP_HELVETICA_10);
+    } else {
+        col3(sg2*0.25f,sg2*0.72f,sg2*0.44f); rrect(sx,sy,sw,sh,3);
+        col3(0.03f,0.38f,0.16f); quad(sx,sy+sh-14,sw,14);
+        col3(0.82f,1.f,0.85f); txt(sx+4,sy+sh-11,"Select Destination",GLUT_BITMAP_HELVETICA_10);
+        struct Btn{const char*d,*t;float r,g,b;};
+        static const Btn btns[4]={
+            {"Motijheel","40 BDT",0.04f,0.38f,0.16f},
+            {"Farmgate", "30 BDT",0.10f,0.28f,0.55f},
+            {"Agargaon", "20 BDT",0.45f,0.28f,0.05f},
+            {"Pallabi",  "15 BDT",0.38f,0.06f,0.38f}
+        };
+        for(int b=0;b<4;b++){
+            float bx2=sx+3+(b%2)*(sw/2-2), by2=sy+3+(b/2)*34;
+            float bw=sw/2-5, bh=30;
+            col4(0,0,0,0.28f); rrect(bx2+1,by2-1,bw,bh,3);
+            col3(btns[b].r,btns[b].g,btns[b].b); rrect(bx2,by2,bw,bh,3);
+            col4(1,1,1,0.11f); quad(bx2,by2+bh-5,bw,5);
+            col3(1,1,1);       txt(bx2+3,by2+bh-10,btns[b].d,GLUT_BITMAP_HELVETICA_10);
+            col3(0.82f,1,0.85f);txt(bx2+3,by2+4,btns[b].t,GLUT_BITMAP_HELVETICA_10);
+        }
+        if(active && (int)(gTime*2)%2==0){
+            col4(1,1,0.5f,0.75f);
+            txt(sx+6,sy+2,"Touch to select",GLUT_BITMAP_HELVETICA_10);
+        }
+    }
+
+    col3(0.15f,0.15f,0.16f); rrect(x+8,y+111,MW-16,6,2);
+    col3(0.52f,0.52f,0.52f); txt(x+10,y+113,"EN | বাং  Help",GLUT_BITMAP_HELVETICA_10);
+
+    col3(0.13f,0.13f,0.14f); rrect(x+8,y+78,MW-16,28,4);
+    col4(0,0,0,0.88f); quad(x+14,y+85,MW-28,11);
+    col4(1,1,1,0.07f); quad(x+14,y+85,MW-28,2);
+    col3(0.55f,0.55f,0.55f); txt(x+10,y+95,"INSERT NOTE",GLUT_BITMAP_HELVETICA_10);
+
+    col3(0.13f,0.13f,0.14f); rrect(x+8,y+57,MW-16,18,4);
+    col4(0,0,0,0.88f); circ(cx,y+66,7,14);
+    ocirc(cx,y+66,7,14,1.4f);
+    col3(0.52f,0.52f,0.52f); txt(x+10,y+59,"COIN",GLUT_BITMAP_HELVETICA_10);
+
+    col3(0.11f,0.11f,0.12f); rrect(x+8,y+17,MW-16,34,4);
+    col4(0,0,0,0.83f); quad(x+16,y+27,MW-32,10);
+    col3(0.33f,0.33f,0.33f);
+    for(int r=0;r<5;r++) quad(x+18+r*13,y+27,7,10);
+    col3(0.52f,0.52f,0.52f); txt(x+10,y+19,"COLLECT TICKET",GLUT_BITMAP_HELVETICA_10);
+
+    col3(0.16f,0.16f,0.17f); rrect(x-5,y-8,MW+10,12,3);
+    col3(0.12f,0.12f,0.13f); quad(cx-14,y-14,28,8);
+
+    float ledG=active?(0.82f+sinf(gTime*1.8f)*0.1f):0.50f;
+    col3(active?0.08f:0.02f, ledG, 0.18f);
+    circ(x+MW-13, y+MH-12, 4, 10);
+}
+
+static void drawBill(float bx,float by,const char*fare="40 BDT"){
+    char amtBuf[8]="";
+    int ai=0;
+    for(int i=0;fare[i]&&fare[i]!=' ';i++) amtBuf[ai++]=fare[i];
+    amtBuf[ai]='\0';
+    col3(0.48f,0.76f,0.48f); rrect(bx-16,by-7,32,14,2);
+    col3(0.36f,0.62f,0.36f); quad(bx-16,by-2,32,4);
+    col3(0.09f,0.26f,0.09f);
+    txt(bx-13,by+3, amtBuf,  GLUT_BITMAP_HELVETICA_10);
+    txt(bx+2,  by-5,"tk",    GLUT_BITMAP_HELVETICA_10);
+    col4(0,0.22f,0,0.38f);
+    for(int i=0;i<3;i++) quad(bx-14+i*9,by+5,6,2);
+}
+
+static void drawTicket(float tx,float ty,float ang,
+                       const char*dest="MRT",const char*fare="BDT"){
+    glPushMatrix();
+    glTranslatef(tx,ty,0); glRotatef(ang,0,0,1);
+    col3(0.96f,0.96f,0.89f); rrect(-19,-9,28,8,2);
+    col3(0.04f,0.48f,0.20f); quad(-19,0,30,5);
+    col3(0.08f,0.08f,0.08f);
+    for(int b=0;b<9;b++) quad(-17+b*3.4f,-8,2.f,7);
+    glPopMatrix();
+}
+
+static void drawArm(float ox,float oy,
+                    float uAng,float fAng,
+                    float sr,float sg,float sb,float skR,
+                    bool holdTicket,int phase,
+                    const char*dest,const char*fare)
+{
+    float skG=skR*0.71f, skB=skR*0.50f;
+    float UA=22.f, FA=19.f;
+
+    glPushMatrix();
+    glTranslatef(ox,oy,0);
+    glRotatef(uAng,0,0,1);
+
+    col3(sr,sg,sb);
+    quad(-4,-UA,8,UA);
+
+    col3(sr*0.82f,sg*0.82f,sb*0.82f);
+    circ(0,-UA,4,8);
+
+    glPushMatrix();
+    glTranslatef(0,-UA,0);
+    glRotatef(fAng,0,0,1);
+
+    col3(sr,sg,sb);
+    quad(-3,-FA,7,FA);
+
+    col3(skR,skG,skB); circ(0.5f,-FA,2.8f,8);
+
+    col3(skR,skG,skB); rrect(-4,-FA-7,8,7,2);
+
+    for(int f=0;f<4;f++){
+        float fx = -3.5f+f*2.4f;
+        col3(skR,skG,skB);
+        quad(fx,-FA-7-5,1.8f,5);
+        col3(skR*0.88f,skG*0.88f,skB*0.88f);
+        circ(fx+0.9f,-FA-12,1.0f,5);
+    }
+    glPushMatrix();
+    glTranslatef(4,-FA-3,0); glRotatef(-35,0,0,1);
+    col3(skR,skG,skB); quad(-1,-5,3,5); circ(0.5f,-5,1.2f,5);
+    glPopMatrix();
+
+    if(holdTicket && (phase==7||phase==8))
+        drawTicket(0,-FA-7-6,0,dest,fare);
+
+    glPopMatrix();
+    glPopMatrix();
+}
+
+static void drawPerson(float px,float py,
+                       float wc,int ph,
+                       float armR_,float armL_,float ht,
+                       float sr,float sg,float sb,float skR,
+                       bool walking,bool hasTicket,
+                       const char*dest,const char*fare)
+{
+    float skG=skR*0.71f, skB=skR*0.50f;
+    float pr=0.14f,pg=0.14f,pb=0.20f;
+    float thigh=30.f, shin=26.f;
+    float hipY = py + 62.f;
+    float legSw = walking ? sinf(wc)*18.f : 0.f;
+    float lSwing =  legSw;
+    float rSwing = -legSw;
+    float lKnee = walking ? (lSwing<0 ? -lSwing*0.5f : 0) : 0;
+    float rKnee = walking ? (rSwing<0 ? -rSwing*0.5f : 0) : 0;
+    float armSw = walking ? sinf(wc)*14.f : 0.f;
+    float laU = walking ? -armSw : armL_;
+    float raU = walking ?  armSw : armR_;
+    float laF=0, raF=0;
+    if(!walking){
+        switch(ph){
+        case 3: laF=6;   raF=15; break;
+        case 4: raF=25;  laF=5;  break;
+        case 5: raF=(armR_>16)?30:6; laF=5; break;
+        case 6: laF=6;   raF=6;  break;
+        case 7: raF=(armR_>36)?36:15; laF=5; break;
+        default:laF=6;   raF=6;  break;
+        }
+    } else {
+        laF = (armSw < -4) ? -armSw*0.3f : 0;
+        raF = (armSw >  4) ?  armSw*0.3f : 0;
+    }
+
+    col4(0.35f,0.32f,0.29f,0.28f);
+    glBegin(GL_TRIANGLE_FAN); glVertex2f(px,py+1);
+    for(int i=0;i<=16;i++){float a=(float)i/16*2*PI;
+        glVertex2f(px+cosf(a)*17,py+sinf(a)*4);}
+    glEnd();
+
+    glPushMatrix();
+    glTranslatef(px-7, hipY, 0);
+    glRotatef(lSwing, 0,0,1);
+    gquad(-5,-thigh,10,thigh, pr*0.88f,pg*0.88f,pb*0.88f, pr,pg,pb);
+    glTranslatef(0,-thigh,0);
+    glRotatef(lKnee, 0,0,1);
+    gquad(-4,-shin,8,shin, pr*0.78f,pg*0.78f,pb*0.78f, pr*0.88f,pg*0.88f,pb*0.88f);
+    glTranslatef(0,-shin,0);
+    col3(0.08f,0.06f,0.05f); rrect(-6,-6,14,6,2);
+    col3(0.14f,0.10f,0.09f); rrect(4,-5,4,5,1);
+    glPopMatrix();
+
+    glPushMatrix();
+    glTranslatef(px+7, hipY, 0);
+    glRotatef(rSwing, 0,0,1);
+    gquad(-5,-thigh,10,thigh, pr*0.88f,pg*0.88f,pb*0.88f, pr,pg,pb);
+    glTranslatef(0,-thigh,0);
+    glRotatef(rKnee, 0,0,1);
+    gquad(-4,-shin,8,shin, pr*0.78f,pg*0.78f,pb*0.78f, pr*0.88f,pg*0.88f,pb*0.88f);
+    glTranslatef(0,-shin,0);
+    col3(0.08f,0.06f,0.05f); rrect(-6,-6,14,6,2);
+    col3(0.14f,0.10f,0.09f); rrect(4,-5,4,5,1);
+    glPopMatrix();
+
+    float torsoBot=62.f, torsoH=44.f, torsoTop=torsoBot+torsoH;
+    gquad(px-12,py+torsoBot,24,torsoH,
+          sr*0.86f,sg*0.86f,sb*0.86f, sr,sg,sb);
+    rrect(px-12,py+torsoBot,24,torsoH, 4);
+    col3(sr*0.68f,sg*0.68f,sb*0.68f);
+    quad(px-1.5f,py+torsoBot+2, 3,28);
+    col3(0.80f,0.80f,0.82f);
+    for(int b=0;b<3;b++) circ(px,py+torsoBot+5+b*8,1.4f,5);
+    col3(0.92f,0.92f,0.90f);
+    glBegin(GL_TRIANGLES);
+    glVertex2f(px-5,py+torsoTop);
+    glVertex2f(px+5,py+torsoTop);
+    glVertex2f(px,  py+torsoTop-12);
+    glEnd();
+    col3(0.78f,0.78f,0.76f); glLineWidth(0.7f);
+    glBegin(GL_LINE_STRIP);
+    glVertex2f(px-5,py+torsoTop);
+    glVertex2f(px,  py+torsoTop-12);
+    glVertex2f(px+5,py+torsoTop);
+    glEnd(); glLineWidth(1);
+
+    float shY = py+torsoTop-4;
+    drawArm(px-11, shY,  laU, laF,  sr,sg,sb, skR,  false,     ph, dest, fare);
+    drawArm(px+11, shY,  raU, raF,  sr,sg,sb, skR,  hasTicket, ph, dest, fare);
+
+    col3(skR,skG,skB);
+    rrect(px-3, py+torsoTop, 6, 9, 2);
+
+    float hcY = py+torsoTop+9+12.f;
+    col3(skR,skG,skB);  circ(px,hcY,12.5f,20);
+    col3(skR*1.03f,skG*1.03f,skB*1.03f); circ(px,hcY-3,9,16);
+
+    glPushMatrix();
+    glTranslatef(px,hcY,0);
+    glRotatef(ht,0,0,1);
+
+    col3(0.07f,0.05f,0.05f);
+    glBegin(GL_TRIANGLE_FAN); glVertex2f(0,0);
+    for(int i=0;i<=14;i++){float a=PI*0.08f+(float)i/14*PI*1.04f;
+        glVertex2f(cosf(a)*12.5f,sinf(a)*12.5f);}
+    glEnd();
+
+    col3(0.08f,0.05f,0.04f); glLineWidth(1.7f);
+    glBegin(GL_LINE_STRIP);glVertex2f(-6.5f,2.5f);glVertex2f(-4,3.5f);glVertex2f(-1.5f,2.5f);glEnd();
+    glBegin(GL_LINE_STRIP);glVertex2f(1.5f,2.5f); glVertex2f(4,3.5f); glVertex2f(6.5f,2.5f); glEnd();
+    glLineWidth(1);
+
+    col3(0.94f,0.94f,0.92f);
+    rrect(-7,-1,5.5f,4,2); rrect(1.5f,-1,5.5f,4,2);
+    col3(0.22f,0.14f,0.07f);
+    circ(-4.2f,1,2.f,8); circ(4.2f,1,2.f,8);
+    col3(0.04f,0.03f,0.03f);
+    circ(-4.2f,1,1.1f,7); circ(4.2f,1,1.1f,7);
+    col3(1,1,1); circ(-3.5f,1.6f,0.5f,5); circ(4.9f,1.6f,0.5f,5);
+
+    col3(skR*0.86f,skG*0.86f,skB*0.86f);
+    circ(-1.4f,-3,1.2f,7); circ(1.4f,-3,1.2f,7);
+
+    col3(0.50f,0.28f,0.20f); glLineWidth(1.4f);
+    glBegin(GL_LINE_STRIP);
+    for(int i=0;i<=8;i++){
+        float a=PI+(float)i/8*PI;
+        float sm=(ph==8)?1.8f:0.4f;
+        glVertex2f(cosf(a)*3.5f,-7+sinf(a)*sm);
+    }
+    glEnd(); glLineWidth(1);
+
+    col3(skR,skG,skB); circ(-12,0,3,7);
+    col3(skR*0.88f,skG*0.88f,skB*0.88f); circ(-12,0,1.6f,6);
+
+    glPopMatrix();
+}
+
+static void drawQueuer(Queuer*q){
+    float x=q->x, y=q->y;
+    float skG=q->skR*0.71f, skB=q->skR*0.50f;
+    float pr=0.14f,pg=0.14f,pb=0.20f;
+    float thigh=28.f, shin=24.f;
+    float hipY=y+thigh+shin;
+    float legSw = sinf(q->walkWC)*14.f;
+    float lLeg  =  legSw * q->walkDir;
+    float rLeg  = -legSw * q->walkDir;
+    float lKnee = (lLeg<0) ? -lLeg*0.45f : 0;
+    float rKnee = (rLeg<0) ? -rLeg*0.45f : 0;
+    float armSw = sinf(q->walkWC)*11.f;
+
+    col4(0.35f,0.32f,0.29f,0.22f);
+    glBegin(GL_TRIANGLE_FAN); glVertex2f(x,y+1);
+    for(int i=0;i<=12;i++){float a=(float)i/12*2*PI;
+        glVertex2f(x+cosf(a)*14,y+sinf(a)*3);}
+    glEnd();
+
+    glPushMatrix();
+    glTranslatef(x-5, hipY, 0); glRotatef(lLeg,0,0,1);
+    gquad(-4,-thigh,8,thigh, pr*0.88f,pg*0.88f,pb*0.88f, pr,pg,pb);
+    glTranslatef(0,-thigh,0); glRotatef(lKnee,0,0,1);
+    gquad(-3,-shin, 7,shin,  pr*0.78f,pg*0.78f,pb*0.78f, pr*0.88f,pg*0.88f,pb*0.88f);
+    glTranslatef(0,-shin,0);
+    col3(0.08f,0.06f,0.05f); rrect(-5,-5,12,5,2);
+    glPopMatrix();
+
+    glPushMatrix();
+    glTranslatef(x+5, hipY, 0); glRotatef(rLeg,0,0,1);
+    gquad(-4,-thigh,8,thigh, pr*0.88f,pg*0.88f,pb*0.88f, pr,pg,pb);
+    glTranslatef(0,-thigh,0); glRotatef(rKnee,0,0,1);
+    gquad(-3,-shin, 7,shin,  pr*0.78f,pg*0.78f,pb*0.78f, pr*0.88f,pg*0.88f,pb*0.88f);
+    glTranslatef(0,-shin,0);
+    col3(0.08f,0.06f,0.05f); rrect(-5,-5,12,5,2);
+    glPopMatrix();
+
+    float bBot=hipY-y, bTop=bBot+38.f;
+    gquad(x-10,y+bBot,20,38, q->cr*0.86f,q->cg*0.86f,q->cb*0.86f, q->cr,q->cg,q->cb);
+    rrect(x-10,y+bBot,20,38,3);
+
+    float shY=y+bTop-4;
+    for(int s=-1;s<=1;s+=2){
+        float sw = s * armSw * q->walkDir;
+        glPushMatrix();
+        glTranslatef(x+s*9, shY, 0); glRotatef(sw,0,0,1);
+        col3(q->cr,q->cg,q->cb); quad(-3,-17,7,17);
+        glTranslatef(0,-17,0); glRotatef(sw*0.3f,0,0,1);
+        col3(q->cr,q->cg,q->cb); quad(-3,-15,7,15);
+        col3(q->skR,skG,skB); rrect(-3,-22,7,7,1);
+        glPopMatrix();
+    }
+
+    col3(q->skR,skG,skB); rrect(x-3,y+bTop,6,8,2);
+
+    float hcY=y+bTop+8+10.f;
+    col3(q->skR,skG,skB); circ(x,hcY,11.f,20);
+    col3(0.07f,0.05f,0.05f);
+    glBegin(GL_TRIANGLE_FAN); glVertex2f(x,hcY);
+    for(int i=0;i<=13;i++){float a=PI*0.08f+(float)i/13*PI*1.04f;
+        glVertex2f(x+cosf(a)*11.f,hcY+sinf(a)*11.f);}
+    glEnd();
+    col3(0.04f,0.03f,0.03f); circ(x-3,hcY,1.4f,7); circ(x+3,hcY,1.4f,7);
+    col3(0.48f,0.26f,0.18f); glLineWidth(1.2f);
+    glBegin(GL_LINES); glVertex2f(x-2,hcY-5); glVertex2f(x+2,hcY-5); glEnd();
+    glLineWidth(1);
+}
+
+static void drawBubble(Person&p){
+    if(p.phase<3||p.phase>6) return;
+    float bx=p.x+16, by=p.y+140;
+    col4(1,1,1,0.92f); rrect(bx,by,114,28,5);
+    glBegin(GL_TRIANGLES);
+    col4(1,1,1,0.92f);
+    glVertex2f(bx+8,by); glVertex2f(bx+20,by); glVertex2f(bx+10,by-8);
+    glEnd();
+    col4(0.05f,0.50f,0.20f,0.65f); glLineWidth(1.3f);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(bx,by);glVertex2f(bx+114,by);
+    glVertex2f(bx+114,by+28);glVertex2f(bx,by+28);
+    glEnd(); glLineWidth(1);
+    char topbuf[64], botbuf[64];
+    if(p.phase==3){
+        snprintf(topbuf,sizeof(topbuf),"Going %s!",p.dest);
+        snprintf(botbuf,sizeof(botbuf),"(%s select)",p.dest);
+    }
+    else if(p.phase==4){
+        snprintf(topbuf,sizeof(topbuf),"Inserting %s",p.fare);
+        snprintf(botbuf,sizeof(botbuf),"(Note inserting)");
+    }
+    else {
+        snprintf(topbuf,sizeof(topbuf),"%s confirmed!",p.fare);
+        snprintf(botbuf,sizeof(botbuf),"(Confirming fare)");
+    }
+    col3(0.05f,0.05f,0.10f); txt(bx+5,by+17,topbuf,GLUT_BITMAP_HELVETICA_12);
+    col3(0.20f,0.20f,0.50f); txt(bx+5,by+5, botbuf,GLUT_BITMAP_HELVETICA_10);
+}
+
+static void drawQLBubble(QLPerson&q){
+    if(q.phase != 3 || q.timer >= 7.5f) return;
+
+    float bx=q.x+16, by=q.y+140;
+    col4(1,1,1,0.92f); rrect(bx,by,114,28,5);
+    glBegin(GL_TRIANGLES);
+    col4(1,1,1,0.92f);
+    glVertex2f(bx+8,by); glVertex2f(bx+20,by); glVertex2f(bx+10,by-8);
+    glEnd();
+    col4(0.05f,0.50f,0.20f,0.65f); glLineWidth(1.3f);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(bx,by);glVertex2f(bx+114,by);
+    glVertex2f(bx+114,by+28);glVertex2f(bx,by+28);
+    glEnd(); glLineWidth(1);
+
+    char topbuf[64], botbuf[64];
+
+    if(q.timer < 2.5f){
+        snprintf(topbuf,sizeof(topbuf),"Going %s!",q.dest);
+        snprintf(botbuf,sizeof(botbuf),"(%s select)",q.dest);
+    } else if(q.timer < 5.5f){
+        snprintf(topbuf,sizeof(topbuf),"Inserting %s",q.fare);
+        snprintf(botbuf,sizeof(botbuf),"(Note inserting)");
+    } else {
+        snprintf(topbuf,sizeof(topbuf),"%s confirmed!",q.fare);
+        snprintf(botbuf,sizeof(botbuf),"(Confirming fare)");
+    }
+
+    col3(0.05f,0.05f,0.10f); txt(bx+5,by+17,topbuf,GLUT_BITMAP_HELVETICA_12);
+    col3(0.20f,0.20f,0.50f); txt(bx+5,by+5, botbuf,GLUT_BITMAP_HELVETICA_10);
+}
+
+static const char*phLbl[]=
+    {"To Queue","In Queue","To Machine","Selecting","Confirming",
+     "Inserting","Processing","Collecting","Walking away","Done"};
+static void drawHUD(){
+    col4(0.04f,0.04f,0.07f,0.90f); quad(0,0,WW,24);
+    col3(0.05f,0.70f,0.28f);
+    char buf[320];
+    snprintf(buf,sizeof(buf),
+        "Dhaka MRT-6  |  B1:%s  B2:%s  B3:%s  |  Queue:%d waiting  |  FIRE:%s  |  F=Alarm  R=Restart  ESC=Exit",
+        phLbl[P[0].phase<10?P[0].phase:9],
+        phLbl[P[1].phase<10?P[1].phase:9],
+        phLbl[P[2].phase<10?P[2].phase:9],
+        NQL,
+        gFireAlarm ? "ACTIVE!" : "Normal");
+    if(gFireAlarm){ col3(1.f,0.3f,0.0f); } else { col3(0.05f,0.70f,0.28f); }
+    txt(10,7,buf,GLUT_BITMAP_HELVETICA_10);
+}
+
+static void updatePerson(Person&p,float dt){
+    p.timer+=dt;
+    switch(p.phase){
+
+    case 0:
+        p.wc += dt*3.0f;
+        { float dx = p.queueSlotX - p.x;
+          if(dx > 2.f){ p.x += 52.f*dt; }
+          else if(dx < -2.f){ p.x -= 52.f*dt; }
+          else { p.x=p.queueSlotX; p.wc=0; p.phase=1; p.timer=0; } }
+        break;
+
+    case 1:
+        p.wc += dt*0.8f;
+        p.delayTimer += dt;
+        break;
+
+    case 2:
+        p.wc += dt*3.0f;
+        { float rem=p.stopX-p.x;
+          if(rem>2.f){ p.x+=65.f*dt; }
+          else if(rem<-2.f){ p.x-=65.f*dt; }
+          else{ p.x=p.stopX; p.wc=0; p.phase=3; p.timer=0; } }
+        break;
+
+    case 3:
+        p.headTilt += (12.f - p.headTilt)*dt*2.f;
+        p.armR     += (14.f - p.armR)    *dt*1.5f;
+        p.armL     += (-5.f - p.armL)    *dt*1.5f;
+        p.screenGlow+=(0.30f-p.screenGlow)*dt*2.f;
+        if(p.timer>2.5f){ p.phase=4; p.timer=0; }
+        break;
+
+    case 4:
+        p.armR+=(36.f-p.armR)*dt*2.5f;
+        if(p.timer>0.6f&&!p.billVis){
+            p.billVis=true;
+            p.billY=MY+91.f;
+            p.billX=p.x+18.f;
+            p.billTargX=MCX[p.machIdx]-MW*0.5f+14.f;
+        }
+        if(p.billVis){
+            float spd=(p.billTargX-p.billX);
+            p.billX+=spd*dt*5.f;
+            if(fabsf(p.billX-p.billTargX)<1.5f){
+                p.billVis=false;p.phase=5;p.timer=0;p.procAngle=0;
+            }
+        }
+        break;
+
+    case 5:
+        { float tgt=(p.timer<1.0f)?26.f:12.f;
+          p.armR+=(tgt-p.armR)*dt*4.f;
+          p.screenGlow+=(0.70f-p.screenGlow)*dt*5.f;
+          if(p.timer>2.0f){ p.screenGlow=0.25f; p.phase=6; p.timer=0; } }
+        break;
+
+    case 6:
+        p.procAngle += dt*3.5f;
+        p.armR      += (5.f -p.armR)*dt*1.5f;
+        p.armL      += (-6.f-p.armL)*dt*1.5f;
+        p.screenGlow = 0.15f+sinf(p.procAngle*0.4f)*0.07f;
+        if(p.timer>3.2f){ p.procAngle=0; p.screenGlow=0; p.phase=7; p.timer=0; }
+        break;
+
+    case 7:
+        { float tgt=(p.timer<0.9f)?45.f:8.f;
+          p.armR += (tgt-p.armR)*dt*2.5f;
+          if(p.timer>0.9f && !p.hasTicket){
+              p.hasTicket=true;
+          }
+          p.headTilt += (0.f-p.headTilt)*dt*2.f;
+          if(p.timer>2.8f + p.leaveDelay){ p.phase=8; p.timer=0; } }
+        break;
+
+    case 8:
+        p.wc  += dt*3.0f;
+        p.x   += 54.f*dt;
+        p.headTilt += (0.f-p.headTilt)*dt*2.f;
+        p.screenGlow=0;
+        if(p.x > WW+110){ p.phase=9; p.timer=0; }
+        break;
+
+    case 9:
+        if(p.timer>1.5f){
+            int inLine=0;
+            for(int j=0;j<NQL;j++) if(QL[j].phase==0||QL[j].phase==1) inLine++;
+            for(int j=0;j<NP;j++) if(P[j].phase==0||P[j].phase==1) inLine++;
+            int idx = p.machIdx;
+            initPerson(idx);
+            P[idx].queueSlotX = qlSlotX[inLine < NQL+NP ? inLine : NQL+NP-1];
+            P[idx].stopX      = P[idx].queueSlotX;
+        }
+        break;
+    }
+}
+
+static void updateQueuers(float dt){
+    for(int i=0;i<2;i++){
+        Queuer&q=QP[i];
+        q.walkWC += dt*2.5f;
+        q.x      += q.walkDir * 18.f * dt;
+        if(q.x >= q.maxX){ q.x=q.maxX; q.walkDir=-1; }
+        if(q.x <= q.minX){ q.x=q.minX; q.walkDir= 1; }
+    }
+}
+
+static void updateXWalkers(float dt){
+    for(int i=0;i<NXW;i++){
+        XW[i].wc += dt*2.8f;
+        XW[i].x  += XW[i].dir * XW[i].speed * dt;
+        if(XW[i].dir==1  && XW[i].x > WW+80){ XW[i].x = -80.f; }
+        if(XW[i].dir==-1 && XW[i].x < -80.f){ XW[i].x = (float)WW+80.f; }
+    }
+}
+
+static void display(){
+    glClear(GL_COLOR_BUFFER_BIT);
+    glLoadIdentity();
+
+    drawStation();
+
+    drawFireAlarm(240,  FLOOR_Y+255);
+    drawFireAlarm(510,  FLOOR_Y+255);
+    drawFireAlarm(780,  FLOOR_Y+255);
+
+    drawATM();
+
+    for(int m=0; m<3; m++){
+        bool mAct = false;
+        float mGlow = 0.f;
+        float mAng = 0.f;
+
+        for(int i=0; i<NP; i++){
+            if(P[i].machIdx == m && P[i].phase >= 3 && P[i].phase <= 7){
+                mAct = true;
+                mGlow = P[i].screenGlow;
+                mAng = P[i].procAngle;
+            }
+        }
+
+        for(int i=0; i<NQL; i++){
+            if(QL[i].machIdx == m && QL[i].phase == 3){
+                mAct = true;
+                mGlow = QL[i].screenGlow;
+                mAng = QL[i].procAngle;
+            }
+        }
+
+        drawMachine(MCX[m], mGlow, mAng, mAct);
+    }
+
+    for(int i=0;i<NP;i++)
+        if(P[i].phase==7 && P[i].timer<0.85f)
+            drawTicket(MCX[i], MY+28, 0, P[i].dest, P[i].fare);
+
+    for(int i=0;i<NP;i++)
+        if(P[i].billVis) drawBill(P[i].billX, P[i].billY, P[i].fare);
+
+    drawQueuer(&QP[1]); drawQueuer(&QP[0]);
+
+    drawQueueLine();
+    for(int i=NQL-1;i>=0;i--) {
+        drawQLPerson(QL[i]);
+        drawQLBubble(QL[i]);
+    }
+    for(int i=0;i<NQL;i++)
+        if(QL[i].billVis) drawBill(QL[i].billX, QL[i].billY, QL[i].fare);
+    for(int i=0;i<NQL;i++)
+        if(QL[i].phase==3 && QL[i].timer>8.7f && QL[i].timer<9.6f)
+            drawTicket(MCX[QL[i].machIdx], MY+28, 0, QL[i].dest, QL[i].fare);
+    for(int i=0;i<NQL;i++){
+        if(QL[i].hasTicket && QL[i].phase==4 && QL[i].timer<1.5f){
+            float al=sinf(QL[i].timer*2.5f)*0.5f+0.5f;
+            col4(0.04f,0.55f,0.22f,al);
+            txt(QL[i].x-14, QL[i].y+165, "Got ticket!", GLUT_BITMAP_HELVETICA_18);
+        }
+    }
+
+    for(int i=0;i<NP;i++){
+        bool walk=(P[i].phase==0||P[i].phase==1||P[i].phase==2||P[i].phase==8);
+        drawPerson(P[i].x, P[i].y,
+                   P[i].wc, P[i].phase,
+                   P[i].armR, P[i].armL, P[i].headTilt,
+                   P[i].sr, P[i].sg, P[i].sb, P[i].skR,
+                   walk, P[i].hasTicket, P[i].dest, P[i].fare);
+        drawBubble(P[i]);
+    }
+
+    for(int i=0;i<NP;i++){
+        if(P[i].phase==7 && P[i].timer>2.f){
+            float al=sinf((P[i].timer-2.f)*2.5f)*0.5f+0.5f;
+            col4(0.04f,0.55f,0.22f,al);
+            txt(P[i].x-14, P[i].y+165, "Got ticket!", GLUT_BITMAP_HELVETICA_18);
+        }
+    }
+
+    for(int i=0;i<NXW;i++) drawXWalker(&XW[i]);
+
+    drawHUD();
+    glutSwapBuffers();
+}
+
+static void timerCB(int){
+    float now=glutGet(GLUT_ELAPSED_TIME)/1000.f;
+    float dt=now-lastTime; if(dt>0.05f) dt=0.05f;
+    lastTime=now; gTime+=dt;
+    if(gFireAlarm) gAlarmFlash+=dt;
+    for(int i=0;i<NP;i++) updatePerson(P[i],dt);
+    updateQueuers(dt);
+    updateXWalkers(dt);
+    updateQLQueue(dt);
+    glutPostRedisplay();
+    glutTimerFunc(16,timerCB,0);
+}
+static void keyCB(unsigned char k,int,int){
+    if(k==27) exit(0);
+    if(k=='f'||k=='F'){
+        gFireAlarm = !gFireAlarm;
+        if(!gFireAlarm) gAlarmFlash=0.f;
+    }
+    if(k=='r'||k=='R'){
+        for(int i=0;i<NP;i++) initPerson(i);
+        initQueuers(); initXWalkers();
+        initQL(); gPurchaseCount=0;
+        gFireAlarm=false; gAlarmFlash=0.f;
+    }
+}
+static void reshapeCB(int w,int h){
+    glViewport(0,0,w,h);
+    glMatrixMode(GL_PROJECTION); glLoadIdentity();
+    gluOrtho2D(0,WW,0,WH);
+    glMatrixMode(GL_MODELVIEW);
+}
+
+static const int WIN_W = 1100;
+static const int WIN_H = 680;
+
 static const float S2_PI = 3.14159265f;
-static float s2_gTime=0.0f, s2_lastTime=0.0f;
+static float s2_gTime = 0.0f;
 
-static const float S2_FLOOR_Y = 200.f;
-static const float S2_MW      = 112.f;
-static const float S2_MH      = 240.f;
-static const float S2_MY      = S2_FLOOR_Y;
-static const float S2_MGAP    = 178.f;
-static float s2_MCX[3];
-
-//scene-2 primitive wrappers
 static void s2_col3(float r,float g,float b){glColor3f(r,g,b);}
 static void s2_col4(float r,float g,float b,float a){glColor4f(r,g,b,a);}
 
@@ -511,23 +2306,20 @@ static void s2_gquad(float x,float y,float w,float h,
     glColor3f(r1,g1,b1); glVertex2f(x+w,y+h); glVertex2f(x,y+h);
     glEnd();
 }
-static void s2_circ(float cx,float cy,float r,int s=24)
-{
+static void s2_circ(float cx,float cy,float r,int s=24){
     glBegin(GL_TRIANGLE_FAN); glVertex2f(cx,cy);
-    for(int i=0;i<=s;i++){float a=2*S2_PI*i/s;
-        glVertex2f(cx+cosf(a)*r,cy+sinf(a)*r);}
+    for(int i=0;i<=s;i++){
+        float a=2*S2_PI*i/s;
+        glVertex2f(cx+cosf(a)*r,cy+sinf(a)*r);
+    }
     glEnd();
-}
-static void s2_ocirc(float cx,float cy,float r,int s,float lw){
-    glLineWidth(lw); glBegin(GL_LINE_LOOP);
-    for(int i=0;i<s;i++){float a=2*S2_PI*i/s;
-        glVertex2f(cx+cosf(a)*r,cy+sinf(a)*r);}
-    glEnd(); glLineWidth(1);
 }
 static void s2_rrcorner(float cx,float cy,float r,float sa){
     glBegin(GL_TRIANGLE_FAN); glVertex2f(cx,cy);
-    for(int i=0;i<=8;i++){float a=sa+i*(S2_PI/2)/8;
-        glVertex2f(cx+cosf(a)*r,cy+sinf(a)*r);}
+    for(int i=0;i<=8;i++){
+        float a=sa+i*(S2_PI/2)/8;
+        glVertex2f(cx+cosf(a)*r,cy+sinf(a)*r);
+    }
     glEnd();
 }
 static void s2_rrect(float x,float y,float w,float h,float r){
@@ -538,79 +2330,6 @@ static void s2_rrect(float x,float y,float w,float h,float r){
 }
 static void s2_txt(float x,float y,const char*s,void*f=GLUT_BITMAP_HELVETICA_12){
     glRasterPos2f(x,y); for(;*s;s++) glutBitmapCharacter((void*)f,*s);
-}
-
-//scene-2 structs
-struct S2_Person {
-    float x,y,stopX;
-    int   machIdx,phase;
-    float timer,wc;
-    float armR,armL,headTilt;
-    bool  hasTicket,billVis;
-    float billX,billY,billTargX;
-    float procAngle,screenGlow;
-    float sr,sg,sb,skR;
-    const char*dest,*fare;
-};
-
-static const int S2_NP=3;
-static S2_Person s2_P[S2_NP];
-
-struct S2_Queuer{
-    float x,y,cr,cg,cb,skR,fidgetT;
-    bool  fidget;
-    float walkWC;
-    int   walkDir;
-    float minX,maxX;
-};
-static S2_Queuer s2_QP[2];
-
-static void s2_initPerson(int i){
-    S2_Person &p=s2_P[i];
-    p.machIdx=i;
-    p.stopX=s2_MCX[i]-68.f;
-    p.x=-80.f-i*165.f;
-    p.y=S2_FLOOR_Y-18.f;
-    p.phase=0; p.timer=0; p.wc=0;
-    p.armR=0; p.armL=0; p.headTilt=0;
-    p.hasTicket=false; p.billVis=false;
-    p.billX=0; p.billY=0; p.billTargX=0;
-    p.procAngle=0; p.screenGlow=0;
-    static const float shirts[3][3]={
-        {0.16f,0.26f,0.56f},{0.52f,0.16f,0.16f},{0.14f,0.40f,0.22f}};
-    p.sr=shirts[i][0]; p.sg=shirts[i][1]; p.sb=shirts[i][2];
-    static const float skins[3]={0.72f,0.65f,0.76f};
-    p.skR=skins[i];
-    static const char*dests[3]={"Motijheel","Farmgate","Pallabi"};
-    static const char*fares[3]={"40 BDT","30 BDT","15 BDT"};
-    p.dest=dests[i]; p.fare=fares[i];
-}
-
-static void s2_initQueuers(){
-    s2_QP[0]={120.f,S2_FLOOR_Y-18.f,0.50f,0.28f,0.55f,0.68f,0,false,0,  1,60.f,300.f};
-    s2_QP[1]={220.f,S2_FLOOR_Y-18.f,0.72f,0.54f,0.16f,0.73f,0,false,1.6f,-1,60.f,300.f};
-}
-
-//scene-2 drawing
-static void s2_drawTicket(float tx,float ty,float ang,
-                          const char*dest="MRT",const char*fare="BDT"){
-    glPushMatrix();
-    glTranslatef(tx,ty,0); glRotatef(ang,0,0,1);
-    s2_col3(0.96f,0.96f,0.89f); s2_rrect(-19,-9,28,8,2);
-    s2_col3(0.04f,0.48f,0.20f); s2_quad(-19,0,30,5);
-    s2_col3(0.08f,0.08f,0.08f);
-    for(int b=0;b<9;b++) s2_quad(-17+b*3.4f,-8,2.f,7);
-    glPopMatrix();
-}
-
-static void s2_drawBill(float bx,float by){
-    s2_col3(0.48f,0.76f,0.48f); s2_rrect(bx-24,by-10,48,20,2);
-    s2_col3(0.36f,0.62f,0.36f); s2_quad(bx-24,by-3,48,6);
-    s2_col3(0.09f,0.26f,0.09f);
-    s2_txt(bx-20,by+3,"50", GLUT_BITMAP_HELVETICA_12);
-    s2_txt(bx+2, by-6,"BDT",GLUT_BITMAP_HELVETICA_10);
-    s2_col4(0,0.22f,0,0.38f);
-    for(int i=0;i<4;i++) s2_quad(bx-22+i*11,by+7,8,2);
 }
 
 static void s2_drawArm(float ox,float oy,
@@ -641,8 +2360,6 @@ static void s2_drawArm(float ox,float oy,
     glTranslatef(4,-FA-3,0); glRotatef(-35,0,0,1);
     s2_col3(skR,skG,skB); s2_quad(-1,-5,3,5); s2_circ(0.5f,-5,1.2f,5);
     glPopMatrix();
-    if(holdTicket&&(phase==6||phase==7))
-        s2_drawTicket(0,-FA-7-6,0,dest,fare);
     glPopMatrix();
     glPopMatrix();
 }
@@ -675,21 +2392,18 @@ static void s2_drawPerson(float px,float py,
         case 6: raF=(armR_>36)?36:15; laF=5; break;
         default:laF=6;   raF=6;  break;
         }
-    }
-    else
-    {
+    } else {
         laF=(armSw<-4)?-armSw*0.3f:0;
         raF=(armSw> 4)? armSw*0.3f:0;
     }
     s2_col4(0.35f,0.32f,0.29f,0.28f);
     glBegin(GL_TRIANGLE_FAN); glVertex2f(px,py+1);
-    for(int i=0;i<=16;i++)
-    {
+    for(int i=0;i<=16;i++){
         float a=(float)i/16*2*S2_PI;
         glVertex2f(px+cosf(a)*17,py+sinf(a)*4);
     }
     glEnd();
-    /* left leg */
+
     glPushMatrix();
     glTranslatef(px-7,hipY,0); glRotatef(lSwing,0,0,1);
     s2_gquad(-5,-thigh,10,thigh,pr*0.88f,pg*0.88f,pb*0.88f,pr,pg,pb);
@@ -699,7 +2413,7 @@ static void s2_drawPerson(float px,float py,
     s2_col3(0.08f,0.06f,0.05f); s2_rrect(-6,-6,14,6,2);
     s2_col3(0.14f,0.10f,0.09f); s2_rrect(4,-5,4,5,1);
     glPopMatrix();
-    /* right leg */
+
     glPushMatrix();
     glTranslatef(px+7,hipY,0); glRotatef(rSwing,0,0,1);
     s2_gquad(-5,-thigh,10,thigh,pr*0.88f,pg*0.88f,pb*0.88f,pr,pg,pb);
@@ -709,7 +2423,7 @@ static void s2_drawPerson(float px,float py,
     s2_col3(0.08f,0.06f,0.05f); s2_rrect(-6,-6,14,6,2);
     s2_col3(0.14f,0.10f,0.09f); s2_rrect(4,-5,4,5,1);
     glPopMatrix();
-    /* torso */
+
     float torsoBot=62.f,torsoH=44.f,torsoTop=torsoBot+torsoH;
     s2_gquad(px-12,py+torsoBot,24,torsoH,
              sr*0.86f,sg*0.86f,sb*0.86f,sr,sg,sb);
@@ -717,7 +2431,6 @@ static void s2_drawPerson(float px,float py,
     s2_col3(sr*0.68f,sg*0.68f,sb*0.68f); s2_quad(px-1.5f,py+torsoBot+2,3,28);
     s2_col3(0.80f,0.80f,0.82f);
     for(int b=0;b<3;b++) s2_circ(px,py+torsoBot+5+b*8,1.4f,5);
-    /* collar */
     s2_col3(0.92f,0.92f,0.90f);
     glBegin(GL_TRIANGLES);
     glVertex2f(px-5,py+torsoTop); glVertex2f(px+5,py+torsoTop);
@@ -728,13 +2441,13 @@ static void s2_drawPerson(float px,float py,
     glVertex2f(px-5,py+torsoTop); glVertex2f(px,py+torsoTop-12);
     glVertex2f(px+5,py+torsoTop);
     glEnd(); glLineWidth(1);
-    /* arms */
+
     float shY=py+torsoTop-4;
     s2_drawArm(px-11,shY,laU,laF,sr,sg,sb,skR,false,    ph,dest,fare);
     s2_drawArm(px+11,shY,raU,raF,sr,sg,sb,skR,hasTicket,ph,dest,fare);
-    /* neck */
+
     s2_col3(skR,skG,skB); s2_rrect(px-3,py+torsoTop,6,9,2);
-    /* head */
+
     float hcY=py+torsoTop+9+12.f;
     s2_col3(skR,skG,skB); s2_circ(px,hcY,12.5f,20);
     s2_col3(skR*1.03f,skG*1.03f,skB*1.03f); s2_circ(px,hcY-3,9,16);
@@ -742,8 +2455,10 @@ static void s2_drawPerson(float px,float py,
     glTranslatef(px,hcY,0); glRotatef(ht,0,0,1);
     s2_col3(0.07f,0.05f,0.05f);
     glBegin(GL_TRIANGLE_FAN); glVertex2f(0,0);
-    for(int i=0;i<=14;i++){float a=S2_PI*0.08f+(float)i/14*S2_PI*1.04f;
-        glVertex2f(cosf(a)*12.5f,sinf(a)*12.5f);}
+    for(int i=0;i<=14;i++){
+        float a=S2_PI*0.08f+(float)i/14*S2_PI*1.04f;
+        glVertex2f(cosf(a)*12.5f,sinf(a)*12.5f);
+    }
     glEnd();
     s2_col3(0.08f,0.05f,0.04f); glLineWidth(1.7f);
     glBegin(GL_LINE_STRIP);glVertex2f(-6.5f,2.5f);glVertex2f(-4,3.5f);glVertex2f(-1.5f,2.5f);glEnd();
@@ -769,419 +2484,36 @@ static void s2_drawPerson(float px,float py,
     glPopMatrix();
 }
 
-static void s2_drawQueuer(S2_Queuer*q){
-    float x=q->x,y=q->y;
-    float skG=q->skR*0.71f,skB=q->skR*0.50f;
-    float pr=0.14f,pg=0.14f,pb=0.20f;
-    float thigh=28.f,shin=24.f;
-    float hipY=y+thigh+shin;
-    float legSw=sinf(q->walkWC)*14.f;
-    float lLeg= legSw*q->walkDir, rLeg=-legSw*q->walkDir;
-    float lKnee=(lLeg<0)?-lLeg*0.45f:0;
-    float rKnee=(rLeg<0)?-rLeg*0.45f:0;
-    float armSw=sinf(q->walkWC)*11.f;
-    s2_col4(0.35f,0.32f,0.29f,0.22f);
-    glBegin(GL_TRIANGLE_FAN); glVertex2f(x,y+1);
-    for(int i=0;i<=12;i++){float a=(float)i/12*2*S2_PI;
-        glVertex2f(x+cosf(a)*14,y+sinf(a)*3);}
-    glEnd();
-    glPushMatrix();
-    glTranslatef(x-5,hipY,0); glRotatef(lLeg,0,0,1);
-    s2_gquad(-4,-thigh,8,thigh,pr*0.88f,pg*0.88f,pb*0.88f,pr,pg,pb);
-    glTranslatef(0,-thigh,0); glRotatef(lKnee,0,0,1);
-    s2_gquad(-3,-shin,7,shin,pr*0.78f,pg*0.78f,pb*0.78f,pr*0.88f,pg*0.88f,pb*0.88f);
-    glTranslatef(0,-shin,0);
-    s2_col3(0.08f,0.06f,0.05f); s2_rrect(-5,-5,12,5,2);
-    glPopMatrix();
-    glPushMatrix();
-    glTranslatef(x+5,hipY,0); glRotatef(rLeg,0,0,1);
-    s2_gquad(-4,-thigh,8,thigh,pr*0.88f,pg*0.88f,pb*0.88f,pr,pg,pb);
-    glTranslatef(0,-thigh,0); glRotatef(rKnee,0,0,1);
-    s2_gquad(-3,-shin,7,shin,pr*0.78f,pg*0.78f,pb*0.78f,pr*0.88f,pg*0.88f,pb*0.88f);
-    glTranslatef(0,-shin,0);
-    s2_col3(0.08f,0.06f,0.05f); s2_rrect(-5,-5,12,5,2);
-    glPopMatrix();
-    float bBot=hipY-y,bTop=bBot+38.f;
-    s2_gquad(x-10,y+bBot,20,38,q->cr*0.86f,q->cg*0.86f,q->cb*0.86f,q->cr,q->cg,q->cb);
-    s2_rrect(x-10,y+bBot,20,38,3);
-    float shY2=y+bTop-4;
-    for(int s=-1;s<=1;s+=2){
-        float sw=s*armSw*q->walkDir;
-        glPushMatrix();
-        glTranslatef(x+s*9,shY2,0); glRotatef(sw,0,0,1);
-        s2_col3(q->cr,q->cg,q->cb); s2_quad(-3,-17,7,17);
-        glTranslatef(0,-17,0); glRotatef(sw*0.3f,0,0,1);
-        s2_col3(q->cr,q->cg,q->cb); s2_quad(-3,-15,7,15);
-        s2_col3(q->skR,skG,skB); s2_rrect(-3,-22,7,7,1);
-        glPopMatrix();
-    }
-    s2_col3(q->skR,skG,skB); s2_rrect(x-3,y+bTop,6,8,2);
-    float hcY=y+bTop+8+10.f;
-    s2_col3(q->skR,skG,skB); s2_circ(x,hcY,11.f,20);
-    s2_col3(0.07f,0.05f,0.05f);
-    glBegin(GL_TRIANGLE_FAN); glVertex2f(x,hcY);
-    for(int i=0;i<=13;i++){float a=S2_PI*0.08f+(float)i/13*S2_PI*1.04f;
-        glVertex2f(x+cosf(a)*11.f,hcY+sinf(a)*11.f);}
-    glEnd();
-    s2_col3(0.04f,0.03f,0.03f); s2_circ(x-3,hcY,1.4f,7); s2_circ(x+3,hcY,1.4f,7);
-    s2_col3(0.48f,0.26f,0.18f); glLineWidth(1.2f);
-    glBegin(GL_LINES); glVertex2f(x-2,hcY-5); glVertex2f(x+2,hcY-5); glEnd();
-    glLineWidth(1);
-}
-
-static void s2_drawStation(){
-    s2_gquad(0,570,S2_WW,110, 0.86f,0.86f,0.86f, 0.96f,0.96f,0.96f);
-    s2_col3(0.75f,0.75f,0.75f);
-    for(int i=0;i<8;i++) s2_quad(i*155.f,602,118,68);
-    s2_col3(0.91f,0.91f,0.91f);
-    for(int i=0;i<8;i++) s2_quad(i*155.f+118,585,37,85);
-    for(int i=0;i<10;i++){
-        float lx=55+i*105;
-        s2_col3(0.72f,0.72f,0.72f); s2_quad(lx-20,612,40,14);
-        float gl=0.91f+sinf(s2_gTime*0.4f+i*0.8f)*0.04f;
-        s2_col4(gl,gl,gl*0.90f,0.85f); s2_quad(lx-16,613,32,11);
-        glBegin(GL_TRIANGLES);
-        s2_col4(1,1,0.95f,0.06f); glVertex2f(lx,613);
-        s2_col4(1,1,0.95f,0);     glVertex2f(lx-75,500); glVertex2f(lx+75,500);
-        glEnd();
-    }
-    s2_gquad(0,S2_FLOOR_Y,S2_WW,380, 0.89f,0.88f,0.85f, 0.94f,0.93f,0.91f);
-    s2_col3(0.04f,0.52f,0.22f); s2_quad(0,385,S2_WW,18);
-    s2_col3(0.03f,0.40f,0.17f); s2_quad(0,381,S2_WW,5);
-    s2_col3(0.04f,0.52f,0.22f); s2_quad(0,558,S2_WW,12);
-    glLineWidth(0.5f); s2_col4(0,0,0,0.05f);
-    for(int tx=0;tx<S2_WW;tx+=52){
-        glBegin(GL_LINES);glVertex2f(tx,S2_FLOOR_Y);glVertex2f(tx,410);glEnd();}
-    for(int ty=(int)S2_FLOOR_Y;ty<410;ty+=46){
-        glBegin(GL_LINES);glVertex2f(0,ty);glVertex2f(S2_WW,ty);glEnd();}
-    glLineWidth(1);
-    for(int i=0;i<4;i++){
-        float px2=130+i*270;
-        s2_gquad(px2-17,S2_FLOOR_Y,34,400, 0.79f,0.79f,0.77f, 0.87f,0.87f,0.85f);
-        s2_col3(0.04f,0.52f,0.22f); s2_quad(px2-17,383,34,20);
-        s2_col4(0,0,0,0.07f); s2_quad(px2-17,S2_FLOOR_Y,4,400); s2_quad(px2+13,S2_FLOOR_Y,4,400);
-    }
-    s2_gquad(0,0,S2_WW,S2_FLOOR_Y, 0.75f,0.73f,0.70f, 0.84f,0.83f,0.80f);
-    for(int tx=0;tx<S2_WW/72+1;tx++)
-        for(int ty=0;ty<5;ty++){
-            float sh=0.79f+((tx+ty)%2)*0.05f;
-            s2_col3(sh,sh*0.99f,sh*0.97f); s2_quad(tx*72,ty*50,71,49);
-        }
-    s2_col4(1,1,1,0.09f); s2_quad(0,S2_FLOOR_Y-6,S2_WW,6);
-    s2_col3(0.93f,0.77f,0.04f); s2_quad(0,S2_FLOOR_Y-14,S2_WW,14);
-    s2_col3(0.75f,0.61f,0.03f);
-    for(int d=0;d<56;d++) s2_quad(d*20+4,S2_FLOOR_Y-12,9,10);
-    /* station sign */
-    s2_col3(0.03f,0.45f,0.18f); s2_rrect(14,588,200,34,5);
-    s2_col3(1,1,1); s2_txt(36,601,"Uttara North | MRT-6",GLUT_BITMAP_HELVETICA_12);
-    s2_col3(0.50f,0.50f,0.50f); glLineWidth(1.4f);
-    glBegin(GL_LINES);
-    glVertex2f(S2_WW/2-62,628); glVertex2f(S2_WW/2-62,585);
-    glVertex2f(S2_WW/2+62,628); glVertex2f(S2_WW/2+62,585);
-    glEnd(); glLineWidth(1);
-    s2_col3(0.03f,0.45f,0.18f); s2_rrect(S2_WW/2-84,564,168,26,4);
-    s2_col3(1,1,1); s2_txt(S2_WW/2-76,572,"Ticket Vending Machine",GLUT_BITMAP_HELVETICA_12);
-    s2_col3(0.70f,0.04f,0.04f); s2_rrect(S2_WW-160,588,94,28,4);
-    s2_col3(1,1,1); s2_txt(S2_WW-146,598,"EXIT -->",GLUT_BITMAP_HELVETICA_12);
-    s2_col3(0.24f,0.24f,0.24f); s2_rrect(S2_WW-58,600,40,18,3);
-    s2_circ(S2_WW-22,609,6,8); s2_col3(0.08f,0.08f,0.08f); s2_circ(S2_WW-22,609,3,8);
-    s2_col4(0.8f,0.1f,0.1f,0.8f+sinf(s2_gTime*1.5f)*0.2f); s2_circ(S2_WW-45,604,3,6);
-}
-
-static void s2_drawMachine(float cx,float sGlow,float pAngle,bool active){
-    float x=cx-S2_MW/2, y=S2_MY;
-    s2_col4(0,0,0,0.12f);
-    for(int s=6;s>0;s--) s2_rrect(x+s,y-s,S2_MW,S2_MH,9);
-    s2_gquad(x,y,S2_MW,S2_MH, 0.20f,0.20f,0.21f, 0.28f,0.28f,0.29f);
-    s2_rrect(x,y,S2_MW,S2_MH,9);
-    s2_col3(0.35f,0.35f,0.36f); s2_quad(x,y,3,S2_MH); s2_quad(x+S2_MW-3,y,3,S2_MH);
-    s2_col3(0.25f,0.25f,0.26f); s2_rrect(x+5,y+5,S2_MW-10,S2_MH-10,7);
-    float hy=y+S2_MH-46;
-    s2_col3(0.04f,0.50f,0.20f); s2_rrect(x+5,hy,S2_MW-10,41,5);
-    s2_col3(1,1,1); s2_circ(x+18,hy+21,8,16);
-    s2_col3(0.04f,0.50f,0.20f); s2_circ(x+18,hy+21,5,16);
-    s2_col3(1,1,1); s2_txt(x+13,hy+18,"M",GLUT_BITMAP_HELVETICA_10);
-    s2_col3(1,1,1);
-    s2_txt(x+30,hy+30,"Ticket Vending",GLUT_BITMAP_HELVETICA_10);
-    s2_txt(x+38,hy+17,"Machine",       GLUT_BITMAP_HELVETICA_10);
-    float sx=x+8,sy=y+118,sw=S2_MW-16,sh=88;
-    s2_col3(0.09f,0.09f,0.10f); s2_rrect(sx-2,sy-2,sw+4,sh+4,4);
-    float sg2=active?(0.10f+sGlow*0.5f):0.07f;
-    if(active && pAngle>0.05f){
-        s2_col3(sg2*0.2f,sg2*0.85f,sg2*0.5f); s2_rrect(sx,sy,sw,sh,3);
-        s2_col3(0.88f,0.95f,0.88f);
-        s2_txt(sx+5,sy+70,"Processing...",GLUT_BITMAP_HELVETICA_10);
-        s2_txt(sx+8,sy+55,"Please wait",  GLUT_BITMAP_HELVETICA_10);
-        glLineWidth(2.8f); s2_col3(0.10f,0.90f,0.45f);
-        glBegin(GL_LINE_STRIP);
-        for(int i=0;i<=22;i++){float a=pAngle+(float)i/22*(S2_PI*1.6f);
-            glVertex2f(sx+sw/2+cosf(a)*13,sy+28+sinf(a)*13);}
-        glEnd(); glLineWidth(1);
-        s2_col3(0.82f,1.f,0.85f);
-        s2_txt(sx+6,sy+10,"Amount: 40 BDT",GLUT_BITMAP_HELVETICA_10);
-    } else {
-        s2_col3(sg2*0.25f,sg2*0.72f,sg2*0.44f); s2_rrect(sx,sy,sw,sh,3);
-        s2_col3(0.03f,0.38f,0.16f); s2_quad(sx,sy+sh-14,sw,14);
-        s2_col3(0.82f,1.f,0.85f); s2_txt(sx+4,sy+sh-11,"Select Destination",GLUT_BITMAP_HELVETICA_10);
-        struct Btn{const char*d,*t;float r,g,b;};
-        static const Btn btns[4]={
-            {"Motijheel","40 BDT",0.04f,0.38f,0.16f},
-            {"Farmgate", "30 BDT",0.10f,0.28f,0.55f},
-            {"Agargaon", "20 BDT",0.45f,0.28f,0.05f},
-            {"Pallabi",  "15 BDT",0.38f,0.06f,0.38f}
-        };
-        for(int b=0;b<4;b++){
-            float bx2=sx+3+(b%2)*(sw/2-2), by2=sy+3+(b/2)*34;
-            float bw=sw/2-5, bh=30;
-            s2_col4(0,0,0,0.28f); s2_rrect(bx2+1,by2-1,bw,bh,3);
-            s2_col3(btns[b].r,btns[b].g,btns[b].b); s2_rrect(bx2,by2,bw,bh,3);
-            s2_col4(1,1,1,0.11f); s2_quad(bx2,by2+bh-5,bw,5);
-            s2_col3(1,1,1);        s2_txt(bx2+3,by2+bh-10,btns[b].d,GLUT_BITMAP_HELVETICA_10);
-            s2_col3(0.82f,1,0.85f);s2_txt(bx2+3,by2+4,    btns[b].t,GLUT_BITMAP_HELVETICA_10);
-        }
-        if(active&&(int)(s2_gTime*2)%2==0){
-            s2_col4(1,1,0.5f,0.75f);
-            s2_txt(sx+6,sy+2,"Touch to select",GLUT_BITMAP_HELVETICA_10);
-        }
-    }
-    s2_col3(0.15f,0.15f,0.16f); s2_rrect(x+8,y+111,S2_MW-16,6,2);
-    s2_col3(0.52f,0.52f,0.52f); s2_txt(x+10,y+113,"EN | Help",GLUT_BITMAP_HELVETICA_10);
-    s2_col3(0.13f,0.13f,0.14f); s2_rrect(x+8,y+78,S2_MW-16,28,4);
-    s2_col4(0,0,0,0.88f); s2_quad(x+14,y+85,S2_MW-28,11);
-    s2_col4(1,1,1,0.07f); s2_quad(x+14,y+85,S2_MW-28,2);
-    s2_col3(0.55f,0.55f,0.55f); s2_txt(x+10,y+95,"INSERT NOTE",GLUT_BITMAP_HELVETICA_10);
-    s2_col3(0.13f,0.13f,0.14f); s2_rrect(x+8,y+57,S2_MW-16,18,4);
-    s2_col4(0,0,0,0.88f); s2_circ(cx,y+66,7,14);
-    s2_ocirc(cx,y+66,7,14,1.4f);
-    s2_col3(0.52f,0.52f,0.52f); s2_txt(x+10,y+59,"COIN",GLUT_BITMAP_HELVETICA_10);
-    s2_col3(0.11f,0.11f,0.12f); s2_rrect(x+8,y+17,S2_MW-16,34,4);
-    s2_col4(0,0,0,0.83f); s2_quad(x+16,y+27,S2_MW-32,10);
-    s2_col3(0.33f,0.33f,0.33f);
-    for(int r=0;r<5;r++) s2_quad(x+18+r*13,y+27,7,10);
-    s2_col3(0.52f,0.52f,0.52f); s2_txt(x+10,y+19,"COLLECT TICKET",GLUT_BITMAP_HELVETICA_10);
-    s2_col3(0.16f,0.16f,0.17f); s2_rrect(x-5,y-8,S2_MW+10,12,3);
-    s2_col3(0.12f,0.12f,0.13f); s2_quad(cx-14,y-14,28,8);
-    float ledG=active?(0.82f+sinf(s2_gTime*1.8f)*0.1f):0.50f;
-    s2_col3(active?0.08f:0.02f, ledG, 0.18f);
-    s2_circ(x+S2_MW-13,y+S2_MH-12,4,10);
-}
-
-static void s2_drawBubble(S2_Person&p){
-    if(p.phase<2||p.phase>5) return;
-    float bx=p.x+16, by=p.y+140;
-    s2_col4(1,1,1,0.92f); s2_rrect(bx,by,114,28,5);
-    glBegin(GL_TRIANGLES);
-    s2_col4(1,1,1,0.92f);
-    glVertex2f(bx+8,by); glVertex2f(bx+20,by); glVertex2f(bx+10,by-8);
-    glEnd();
-    s2_col4(0.05f,0.50f,0.20f,0.65f); glLineWidth(1.3f);
-    glBegin(GL_LINE_LOOP);
-    glVertex2f(bx,by);     glVertex2f(bx+114,by);
-    glVertex2f(bx+114,by+28); glVertex2f(bx,by+28);
-    glEnd(); glLineWidth(1);
-    char topbuf[64],botbuf[64];
-    if(p.phase==2){
-        snprintf(topbuf,sizeof(topbuf),"Going %s!",p.dest);
-        snprintf(botbuf,sizeof(botbuf),"(%s select)",p.dest);
-    } else if(p.phase==3){
-        snprintf(topbuf,sizeof(topbuf),"%s confirmed!",p.fare);
-        snprintf(botbuf,sizeof(botbuf),"(Confirming fare)");
-    } else {
-        snprintf(topbuf,sizeof(topbuf),"Inserting %s",p.fare);
-        snprintf(botbuf,sizeof(botbuf),"(Note inserting)");
-    }
-    s2_col3(0.05f,0.05f,0.10f); s2_txt(bx+5,by+17,topbuf,GLUT_BITMAP_HELVETICA_12);
-    s2_col3(0.20f,0.20f,0.50f); s2_txt(bx+5,by+5, botbuf,GLUT_BITMAP_HELVETICA_10);
-}
-
-static const char*s2_phLbl[]=
-    {"Walking in","Approaching","Selecting","Confirming",
-     "Inserting note","Processing","Collecting","Walking away","Done"};
-
-static void s2_drawHUD(){
-    s2_col4(0.04f,0.04f,0.07f,0.90f); s2_quad(0,0,S2_WW,24);
-    s2_col3(0.05f,0.70f,0.28f);
-    char buf[300];
-    snprintf(buf,sizeof(buf),
-        "Dhaka MRT-6  |  B1:%s  B2:%s  B3:%s  |  2 in queue  |  SPACE=Scene1  R=Restart  ESC=Exit",
-        s2_phLbl[s2_P[0].phase<9?s2_P[0].phase:8],
-        s2_phLbl[s2_P[1].phase<9?s2_P[1].phase:8],
-        s2_phLbl[s2_P[2].phase<9?s2_P[2].phase:8]);
-    s2_txt(10,7,buf,GLUT_BITMAP_HELVETICA_10);
-}
-
-/* ---------- scene-2 update ---------- */
-static void s2_updatePerson(S2_Person&p,float dt){
-    p.timer+=dt;
-    switch(p.phase){
-    case 0:
-        p.wc+=dt*3.0f; p.x+=52.f*dt;
-        if(p.x>=p.stopX-28.f){p.phase=1;p.timer=0;}
-        break;
-    case 1:{float rem=p.stopX-p.x;
-        p.wc+=dt*1.5f;
-        if(rem>0.8f){p.x+=rem*dt*4.f;}
-        else{p.x=p.stopX;p.wc=0;p.phase=2;p.timer=0;}}
-        break;
-    case 2:
-        p.headTilt+=(12.f-p.headTilt)*dt*2.f;
-        p.armR    +=(14.f-p.armR)    *dt*1.5f;
-        p.armL    +=(-5.f-p.armL)    *dt*1.5f;
-        p.screenGlow+=(0.30f-p.screenGlow)*dt*2.f;
-        if(p.timer>2.5f){p.phase=3;p.timer=0;}
-        break;
-    case 3:{float tgt=(p.timer<0.5f)?26.f:12.f;
-        p.armR+=(tgt-p.armR)*dt*4.f;
-        p.screenGlow+=(0.70f-p.screenGlow)*dt*5.f;
-        if(p.timer>1.6f){p.screenGlow=0.25f;p.phase=4;p.timer=0;}}
-        break;
-    case 4:
-        p.armR+=(36.f-p.armR)*dt*2.5f;
-        if(p.timer>0.6f&&!p.billVis){
-            p.billVis=true;
-            p.billY=S2_MY+91.f;
-            p.billX=p.x+18.f;
-            p.billTargX=s2_MCX[p.machIdx]-S2_MW*0.5f+14.f;
-        }
-        if(p.billVis){
-            float spd=(p.billTargX-p.billX);
-            p.billX+=spd*dt*5.f;
-            if(fabsf(p.billX-p.billTargX)<1.5f){
-                p.billVis=false;p.phase=5;p.timer=0;p.procAngle=0;
-            }
-        }
-        break;
-    case 5:
-        p.procAngle+=dt*3.5f;
-        p.armR+=(5.f-p.armR)*dt*1.5f;
-        p.armL+=(-6.f-p.armL)*dt*1.5f;
-        p.screenGlow=0.15f+sinf(p.procAngle*0.4f)*0.07f;
-        if(p.timer>3.2f){p.procAngle=0;p.screenGlow=0;p.phase=6;p.timer=0;}
-        break;
-    case 6:{float tgt=(p.timer<0.9f)?45.f:8.f;
-        p.armR+=(tgt-p.armR)*dt*2.5f;
-        if(p.timer>0.9f&&!p.hasTicket) p.hasTicket=true;
-        p.headTilt+=(0.f-p.headTilt)*dt*2.f;
-        if(p.timer>2.8f){p.phase=7;p.timer=0;}}
-        break;
-    case 7:
-        p.wc+=dt*3.0f; p.x+=54.f*dt;
-        p.headTilt+=(0.f-p.headTilt)*dt*2.f;
-        p.screenGlow=0;
-        if(p.x>S2_WW+110){p.phase=8;p.timer=0;}
-        break;
-    case 8:
-        if(p.timer>1.5f) s2_initPerson(p.machIdx);
-        break;
-    }
-}
-
-static void s2_updateQueuers(float dt){
-    for(int i=0;i<2;i++){
-        S2_Queuer&q=s2_QP[i];
-        q.walkWC+=dt*2.5f;
-        q.x+=q.walkDir*18.f*dt;
-        if(q.x>=q.maxX){q.x=q.maxX;q.walkDir=-1;}
-        if(q.x<=q.minX){q.x=q.minX;q.walkDir= 1;}
-    }
-}
-
-static void s2_step(float dt){
-    s2_gTime+=dt;
-    for(int i=0;i<S2_NP;i++) s2_updatePerson(s2_P[i],dt);
-    s2_updateQueuers(dt);
-}
-
-/* ---------- scene-2 display ---------- */
-static void s2_display(){
-    glClearColor(0.89f,0.88f,0.86f,1.f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glLoadIdentity();
-
-    s2_drawStation();
-
-    for(int i=0;i<S2_NP;i++){
-        bool act=(s2_P[i].phase>=2&&s2_P[i].phase<=6);
-        s2_drawMachine(s2_MCX[i], act?s2_P[i].screenGlow:0.f,
-                       act?s2_P[i].procAngle:0.f, act);
-    }
-    for(int i=0;i<S2_NP;i++)
-        if(s2_P[i].phase==6&&s2_P[i].timer<0.85f)
-            s2_drawTicket(s2_MCX[i],S2_MY+28,0,s2_P[i].dest,s2_P[i].fare);
-    for(int i=0;i<S2_NP;i++)
-        if(s2_P[i].billVis) s2_drawBill(s2_P[i].billX,s2_P[i].billY);
-
-    s2_drawQueuer(&s2_QP[1]); s2_drawQueuer(&s2_QP[0]);
-
-    for(int i=0;i<S2_NP;i++){
-        bool walk=(s2_P[i].phase==0||s2_P[i].phase==1||s2_P[i].phase==7);
-        s2_drawPerson(s2_P[i].x,s2_P[i].y,
-                      s2_P[i].wc,s2_P[i].phase,
-                      s2_P[i].armR,s2_P[i].armL,s2_P[i].headTilt,
-                      s2_P[i].sr,s2_P[i].sg,s2_P[i].sb,s2_P[i].skR,
-                      walk,s2_P[i].hasTicket,s2_P[i].dest,s2_P[i].fare);
-        s2_drawBubble(s2_P[i]);
-    }
-    for(int i=0;i<S2_NP;i++){
-        if(s2_P[i].phase==6&&s2_P[i].timer>2.f){
-            float al=sinf((s2_P[i].timer-2.f)*2.5f)*0.5f+0.5f;
-            s2_col4(0.04f,0.55f,0.22f,al);
-            s2_txt(s2_P[i].x-14,s2_P[i].y+165,"Got ticket!",GLUT_BITMAP_HELVETICA_18);
-        }
-    }
-    s2_drawHUD();
-    glutSwapBuffers();
-}
-
-/* ---------- scene-2 projection ---------- */
-static void s2_setProjection(int w,int h){
-    glViewport(0,0,w,h);
-    glMatrixMode(GL_PROJECTION); glLoadIdentity();
-    gluOrtho2D(0,S2_WW,0,S2_WH);
-    glMatrixMode(GL_MODELVIEW);
-}
-
-
-/* ============================================================
-   ============================================================
-   SCENE 3 – MRT-6 PLATFORM / TRAIN ARRIVAL
-   (All identifiers prefixed  s3_  to avoid clashes)
-   ============================================================
-   ============================================================ */
-
-/* ---------- scene-3 state ---------- */
-static float s3_trainX     = -2.0f;
-static int   s3_state      = 0;   /* 0=waiting, 1=arriving, 2=boarding, 3=departing */
-static int   s3_timerCount = 0;
-static bool  s3_doorOpen   = false;
-static float s3_textOffset = 0.8f;
-static bool  s3_glassOpen  = false;
-static bool  s3_trainStopped = false;
+static float s3_trainX      = -3.6f;
+static int   s3_state       = 0;
+static int   s3_timerCount  = 0;
+static bool  s3_doorOpen    = false;
+static float s3_textOffset  = 0.8f;
+static bool  s3_glassOpen   = false;
+static bool  s3_trainStopped= false;
 
 struct S3Person {
-    float px;           /* NDC x (feet)                  */
-    float wc;           /* walk cycle                    */
-    int   dir;          /* pacing direction               */
-    bool  inTrain;      /* has boarded                   */
-    bool  boarding;     /* currently walking to door     */
-    float boardTargX;   /* door NDC x to reach           */
-    /* appearance (set in init) */
+    float px;
+    float wc;
+    int   dir;
+    bool  inTrain;
+    bool  boarding;
+    float boardTargX;
     float sr,sg,sb,skR;
     const char*dest,*fare;
 };
 static S3Person s3_persons[4];
 
 static float s3_doorNdcX(){
-    return s3_trainX + 0.0f;  /* centre of the train door opening */
+    return s3_trainX + 0.87f;
 }
 
 static void s3_initPersons(){
-    /* Starting positions spread across platform, pacing */
-    static float startX[4] = {-0.70f, -0.35f, 0.20f, 0.55f};
+    static float startX[4]  = {-0.70f, -0.35f, 0.20f, 0.55f};
     static int   startDir[4]= {1, -1, 1, -1};
     static const float shirts[4][3]={
-        {0.16f,0.26f,0.56f}, {0.52f,0.16f,0.16f},
-        {0.14f,0.40f,0.22f}, {0.45f,0.30f,0.55f}
+        {0.16f,0.26f,0.56f},{0.52f,0.16f,0.16f},
+        {0.14f,0.40f,0.22f},{0.45f,0.30f,0.55f}
     };
     static const float skins[4]={0.72f,0.65f,0.76f,0.68f};
     static const char*dests[4]={"Motijheel","Farmgate","Pallabi","Agargaon"};
@@ -1193,23 +2525,23 @@ static void s3_initPersons(){
         s3_persons[i].inTrain    = false;
         s3_persons[i].boarding   = false;
         s3_persons[i].boardTargX = 0.f;
-        s3_persons[i].sr = shirts[i][0];
-        s3_persons[i].sg = shirts[i][1];
-        s3_persons[i].sb = shirts[i][2];
-        s3_persons[i].skR= skins[i];
-        s3_persons[i].dest = dests[i];
-        s3_persons[i].fare = fares[i];
+        s3_persons[i].sr  = shirts[i][0];
+        s3_persons[i].sg  = shirts[i][1];
+        s3_persons[i].sb  = shirts[i][2];
+        s3_persons[i].skR = skins[i];
+        s3_persons[i].dest= dests[i];
+        s3_persons[i].fare= fares[i];
     }
 }
 
-/* ---------- scene-3 helpers ---------- */
-static void s3_drawRect(float x, float y, float w, float h){
+static void s3_drawRect(float x,float y,float w,float h){
     glBegin(GL_QUADS);
-    glVertex2f(x,y); glVertex2f(x+w,y);
+    glVertex2f(x,y);   glVertex2f(x+w,y);
     glVertex2f(x+w,y+h); glVertex2f(x,y+h);
     glEnd();
 }
-static void s3_drawCircle(float cx, float cy, float r, int seg=60){
+
+static void s3_drawCircle(float cx,float cy,float r,int seg=60){
     glBegin(GL_POLYGON);
     for(int i=0;i<seg;i++){
         float a=i*3.14159f/180.0f*(360.0f/seg);
@@ -1218,7 +2550,6 @@ static void s3_drawCircle(float cx, float cy, float r, int seg=60){
     glEnd();
 }
 
-/* ---------- scene-3 drawing functions ---------- */
 static void s3_drawSky(){
     glBegin(GL_QUADS);
     glColor3f(0.55f,0.80f,1.0f); glVertex2f(-1,1); glVertex2f(1,1);
@@ -1226,7 +2557,7 @@ static void s3_drawSky(){
     glEnd();
 }
 
-static void s3_drawCloud(float cx, float cy){
+static void s3_drawCloud(float cx,float cy){
     glColor3f(1,1,1);
     for(int k=0;k<5;k++){
         float offset=(k-2)*0.06f;
@@ -1280,8 +2611,10 @@ static void s3_drawClock(){
     float secAngle =-second*6.0f;
     glColor3f(0,0,0);
     glBegin(GL_POLYGON);
-    for(int i=0;i<360;i++){float a=i*3.14159f/180.f;
-        glVertex2f(cx+0.1f*cosf(a),cy+0.1f*sinf(a));}
+    for(int i=0;i<360;i++){
+        float a=i*3.14159f/180.f;
+        glVertex2f(cx+0.1f*cosf(a),cy+0.1f*sinf(a));
+    }
     glEnd();
     glColor3f(1,1,1);
     for(int i=0;i<12;i++){
@@ -1323,11 +2656,13 @@ static void s3_drawRailing(){
     }
     glColor3f(0.12f,0.12f,0.12f);
     glBegin(GL_QUADS);
-    glVertex2f(-1,0.18f); glVertex2f(1,0.18f); glVertex2f(1,0.22f); glVertex2f(-1,0.22f);
+    glVertex2f(-1,0.18f); glVertex2f(1,0.18f);
+    glVertex2f(1,0.22f);  glVertex2f(-1,0.22f);
     glEnd();
     glColor3f(1.0f,0.84f,0.0f);
     glBegin(GL_QUADS);
-    glVertex2f(-1,0.175f); glVertex2f(1,0.175f); glVertex2f(1,0.18f); glVertex2f(-1,0.18f);
+    glVertex2f(-1,0.175f); glVertex2f(1,0.175f);
+    glVertex2f(1,0.18f);   glVertex2f(-1,0.18f);
     glEnd();
 }
 
@@ -1376,43 +2711,34 @@ static void s3_drawGlass(){
     }
 }
 
-/* ---------- scene-3 people walk cycles (for s2_drawPerson animation) ---------- */
-
-/* Helper: draw a Scene-2-quality person inside Scene 3's NDC coordinate system. */
-static void s3_drawPersonS2Style(float ndc_x, float wc, int ph,
-                                  float armR_, float armL_, float ht,
-                                  float sr, float sg_, float sb, float skR,
-                                  bool walking, bool hasTicket,
-                                  const char*dest="MRT", const char*fare="BDT")
+static void s3_drawPersonS2Style(float ndc_x,float wc,int ph,
+                                  float armR_,float armL_,float ht,
+                                  float sr,float sg_,float sb,float skR,
+                                  bool walking,bool hasTicket,
+                                  const char*dest="MRT",const char*fare="BDT")
 {
     glPushMatrix();
     glScalef(2.0f/1100.f, 2.0f/680.f, 1.0f);
     glTranslatef(-550.f, -340.f, 0.f);
     float px_s2 = (ndc_x + 1.0f) * 550.f;
-    /* Platform surface is at NDC y = -0.30.
-       py_s2 = (-0.30 + 1.0) * 340 = 238  → person feet on platform top */
     float py_s2 = 238.f;
-    s2_drawPerson(px_s2, py_s2, wc, ph, armR_, armL_, ht,
-                  sr, sg_, sb, skR, walking, hasTicket, dest, fare);
+    s2_drawPerson(px_s2,py_s2,wc,ph,armR_,armL_,ht,
+                  sr,sg_,sb,skR,walking,hasTicket,dest,fare);
     glPopMatrix();
 }
 
 static void s3_drawPeople(){
     for(int k=0;k<4;k++){
-        S3Person&p = s3_persons[k];
-        if(p.inTrain) continue;   /* already boarded – hidden inside train */
-
-        bool walking = (s3_state==0 && !p.boarding)
-                    || (s3_state==2 &&  p.boarding);
-        int  ph      = walking ? 0 : 5;   /* 0=walk, 5=idle */
+        S3Person&p=s3_persons[k];
+        if(p.inTrain) continue;
+        bool walking=(s3_state==0 && !p.boarding)
+                  || (s3_state==2 &&  p.boarding);
+        int  ph=walking?0:5;
         float armR=0,armL=0,ht=0;
-
-        /* While waiting for train: head tilts slightly toward arriving train */
-        if(s3_state==1) ht = 8.f * p.dir;
-
-        s3_drawPersonS2Style(p.px, p.wc, ph, armR, armL, ht,
-                             p.sr, p.sg, p.sb, p.skR,
-                             walking, false, p.dest, p.fare);
+        if(s3_state==1) ht=8.f*p.dir;
+        s3_drawPersonS2Style(p.px,p.wc,ph,armR,armL,ht,
+                             p.sr,p.sg,p.sb,p.skR,
+                             walking,false,p.dest,p.fare);
     }
 }
 
@@ -1433,42 +2759,332 @@ static void s3_drawTrack(){
     glEnd();
 }
 
-static void s3_drawTrain(float x){
-    float y=-0.48f;
-    glPushMatrix();
-    glTranslatef(x,y,0);
-    glColor3f(0.0f,0.75f,1.0f);
+static void s3_roundedRect(float x,float y,float w,float h,float r){
     glBegin(GL_QUADS);
-    glVertex2f(-0.8f,0.0f); glVertex2f(0.8f,0.0f);
-    glVertex2f(0.8f,0.3f);  glVertex2f(-0.8f,0.3f);
+    glVertex2f(x+r,y);   glVertex2f(x+w-r,y);
+    glVertex2f(x+w-r,y+h); glVertex2f(x+r,y+h);
     glEnd();
-    glColor3f(0.25f,0.25f,0.28f);
-    s3_drawRect(-0.68f,0.12f,0.22f,0.16f);
-    s3_drawRect(-0.38f,0.12f,0.22f,0.16f);
-    s3_drawRect( 0.16f,0.12f,0.22f,0.16f);
-    s3_drawRect( 0.46f,0.12f,0.22f,0.16f);
-    glColor3f(1.0f,0.85f,0.0f);
-    s3_drawRect(-0.68f,0.08f,0.22f,0.02f);
-    s3_drawRect(-0.38f,0.08f,0.22f,0.02f);
-    s3_drawRect( 0.16f,0.08f,0.22f,0.02f);
-    s3_drawRect( 0.46f,0.08f,0.22f,0.02f);
-    float offset=s3_doorOpen?0.10f:0.0f;
-    glColor3f(0.25f,0.27f,0.30f);
-    s3_drawRect(-0.15f-offset,0.02f,0.12f,0.30f);
-    s3_drawRect( 0.03f+offset,0.02f,0.12f,0.30f);
-    glColor3f(0.5f,0.5f,0.55f);
-    s3_drawRect(-0.14f-offset,0.02f,0.01f,0.30f);
-    s3_drawRect( 0.14f+offset,0.02f,0.01f,0.30f);
-    glColor3f(1.0f,0.85f,0.2f);
-    s3_drawCircle(0.7f,0.1f,0.06f,30);
-    s3_drawCircle(-0.7f,0.1f,0.06f,30);
-    glColor3f(0.1f,0.1f,0.1f);
-    for(float i=-0.5f;i<=0.5f;i+=0.5f){
-        glBegin(GL_POLYGON);
-        for(int j=0;j<360;j++){float a=j*3.14159f/180.f;
-            glVertex2f(i+0.08f*cosf(a),-0.08f+0.08f*sinf(a));}
+    glBegin(GL_QUADS);
+    glVertex2f(x,y+r);   glVertex2f(x+r,y+r);
+    glVertex2f(x+r,y+h-r); glVertex2f(x,y+h-r);
+    glEnd();
+    glBegin(GL_QUADS);
+    glVertex2f(x+w-r,y+r);   glVertex2f(x+w,y+r);
+    glVertex2f(x+w,y+h-r); glVertex2f(x+w-r,y+h-r);
+    glEnd();
+    float corners[4][2]={{x+r,y+r},{x+w-r,y+r},
+                         {x+w-r,y+h-r},{x+r,y+h-r}};
+    float starts[4]={3.14159f, 1.5f*3.14159f, 0, 0.5f*3.14159f};
+    for(int c=0;c<4;c++){
+        glBegin(GL_TRIANGLE_FAN);
+        glVertex2f(corners[c][0],corners[c][1]);
+        for(int i=0;i<=16;i++){
+            float a=starts[c]+(float)i/16*(3.14159f/2);
+            glVertex2f(corners[c][0]+cosf(a)*r,
+                       corners[c][1]+sinf(a)*r);
+        }
         glEnd();
     }
+}
+
+static void s3_drawTrain(float x, bool frontCab)
+{
+    float y = -0.48f;
+
+    glPushMatrix();
+    glTranslatef(x, y, 0);
+
+    glColor3f(0.18f,0.18f,0.20f);
+
+    glBegin(GL_QUADS);
+    glVertex2f(-0.75f,-0.08f);
+    glVertex2f(0.75f,-0.08f);
+    glVertex2f(0.75f,-0.02f);
+    glVertex2f(-0.75f,-0.02f);
+    glEnd();
+
+for(int b=0;b<4;b++)
+{
+    float bx=-0.55f+b*0.36f;
+
+    glColor3f(0.14f,0.14f,0.15f);
+
+    glBegin(GL_TRIANGLE_FAN);
+    glVertex2f(bx,-0.11f);
+
+    for(int i=0;i<=32;i++)
+    {
+        float a=2*3.14159f*i/32;
+
+        glVertex2f(
+            bx+cosf(a)*0.055f,
+            -0.11f+sinf(a)*0.055f
+        );
+    }
+
+    glEnd();
+
+    glColor3f(0.90f,0.90f,0.92f);
+
+    glBegin(GL_TRIANGLE_FAN);
+    glVertex2f(bx,-0.11f);
+
+    for(int i=0;i<=32;i++)
+    {
+        float a=2*3.14159f*i/32;
+
+        glVertex2f(
+            bx+cosf(a)*0.018f,
+            -0.11f+sinf(a)*0.018f
+        );
+    }
+
+    glEnd();
+
+    glColor3f(0.25f,0.25f,0.25f);
+
+    glBegin(GL_TRIANGLE_FAN);
+    glVertex2f(bx,-0.11f);
+
+    for(int i=0;i<=32;i++)
+    {
+        float a=2*3.14159f*i/32;
+
+        glVertex2f(
+            bx+cosf(a)*0.007f,
+            -0.11f+sinf(a)*0.007f
+        );
+    }
+
+    glEnd();
+}
+
+    glColor3f(0.65f,0.02f,0.02f);
+
+    glBegin(GL_QUADS);
+    glVertex2f(-0.72f,-0.02f);
+    glVertex2f(0.72f,-0.02f);
+    glVertex2f(0.72f, 0.01f);
+    glVertex2f(-0.72f, 0.01f);
+    glEnd();
+
+    glBegin(GL_QUADS);
+
+    glColor3f(0.78f,0.80f,0.82f);
+    glVertex2f(-0.80f,0.00f);
+
+    glVertex2f(0.78f,0.00f);
+
+    glColor3f(0.58f,0.60f,0.63f);
+
+    glVertex2f(0.78f,0.30f);
+    glVertex2f(-0.80f,0.30f);
+
+    glEnd();
+
+glColor3f(0.78f,0.80f,0.82f);
+
+glBegin(GL_TRIANGLE_FAN);
+
+glVertex2f(0.68f,0.15f);
+
+for(int i=0;i<=40;i++)
+{
+    float a = -1.57f + i*(3.14159f/40);
+
+    glVertex2f(
+        0.68f + cosf(a)*0.12f,
+        0.15f + sinf(a)*0.15f
+    );
+}
+
+glEnd();
+
+    if(frontCab)
+    {
+        glColor3f(0.95f,0.95f,0.96f);
+
+        glBegin(GL_TRIANGLE_FAN);
+
+        glVertex2f(-0.68f,0.15f);
+
+        float noseX=-0.80f;
+
+        for(int i=0;i<=32;i++)
+        {
+            float t=(float)i/32;
+
+            float a=3.14159f*0.5f + t*3.14159f;
+
+            float rx=0.14f;
+            float ry=0.15f;
+
+            glVertex2f(
+                noseX+0.14f+cosf(a)*rx*0.7f,
+                0.15f+sinf(a)*ry
+            );
+        }
+
+        glEnd();
+
+        glColor3f(0.65f,0.02f,0.02f);
+
+        glBegin(GL_QUADS);
+
+        glVertex2f(-0.80f,0.00f);
+        glVertex2f(-0.50f,0.00f);
+        glVertex2f(-0.50f,0.08f);
+        glVertex2f(-0.80f,0.08f);
+
+        glEnd();
+    }
+
+    else
+{
+    glColor3f(0.95f,0.95f,0.96f);
+
+    glBegin(GL_TRIANGLE_FAN);
+
+    glVertex2f(0.68f,0.15f);
+
+    for(int i=0;i<=40;i++)
+    {
+        float a = -1.57f + i*(3.14159f/40);
+
+        glVertex2f(
+            0.68f + cosf(a)*0.12f,
+            0.15f + sinf(a)*0.15f
+        );
+    }
+
+    glEnd();
+
+    glColor3f(0.65f,0.02f,0.02f);
+
+    glBegin(GL_QUADS);
+
+    glVertex2f(0.50f,0.00f);
+    glVertex2f(0.80f,0.00f);
+    glVertex2f(0.80f,0.08f);
+    glVertex2f(0.50f,0.08f);
+
+    glEnd();
+}
+
+    glColor3f(0.00f,0.32f,0.10f);
+
+    glBegin(GL_QUADS);
+
+    glVertex2f(-0.76f,0.30f);
+    glVertex2f(0.78f,0.30f);
+
+    glVertex2f(0.78f,0.38f);
+    glVertex2f(-0.76f,0.38f);
+
+    glEnd();
+
+if(frontCab)
+{
+    glColor3f(0.02f,0.02f,0.02f);
+
+    glBegin(GL_QUADS);
+
+    glVertex2f(0.12f,0.305f);
+    glVertex2f(0.72f,0.305f);
+
+    glVertex2f(0.72f,0.365f);
+    glVertex2f(0.12f,0.365f);
+
+    glEnd();
+
+    glColor3f(0.0f,1.0f,0.25f);
+
+    glRasterPos2f(0.18f,0.327f);
+
+    const char* txt = "DESTINATION: KAMALAPUR";
+
+    for(int i=0; txt[i] != '\0'; i++)
+    {
+        glutBitmapCharacter(
+            GLUT_BITMAP_HELVETICA_18,
+            txt[i]
+        );
+    }
+}
+
+    float winX=-0.38f;
+
+    for(int i=0;i<6;i++)
+    {
+        glColor3f(0.10f,0.18f,0.28f);
+
+        glBegin(GL_QUADS);
+
+        glVertex2f(winX,0.10f);
+        glVertex2f(winX+0.12f,0.10f);
+
+        glVertex2f(winX+0.12f,0.24f);
+        glVertex2f(winX,0.24f);
+
+        glEnd();
+
+        winX += 0.18f;
+    }
+
+    float doorXs[4]={-0.48f,-0.08f,0.32f,0.62f};
+
+    for(int d=0; d<4; d++)
+    {
+        float dx=doorXs[d];
+
+        glColor3f(0.17f, 0.18f, 0.20f);
+
+float slide = s3_doorOpen ? 0.035f : 0.0f;
+
+glBegin(GL_QUADS);
+
+glVertex2f(dx-slide,0.01f);
+glVertex2f(dx+0.045f-slide,0.01f);
+glVertex2f(dx+0.045f-slide,0.29f);
+glVertex2f(dx-slide,0.29f);
+
+glEnd();
+
+glBegin(GL_QUADS);
+
+glVertex2f(dx+0.045f+slide,0.01f);
+glVertex2f(dx+0.09f+slide,0.01f);
+glVertex2f(dx+0.09f+slide,0.29f);
+glVertex2f(dx+0.045f+slide,0.29f);
+
+glEnd();
+
+        glColor3f(0.20f,0.20f,0.20f);
+
+        glBegin(GL_LINES);
+
+        glVertex2f(dx+0.045f,0.02f);
+        glVertex2f(dx+0.045f,0.28f);
+
+        glEnd();
+    }
+
+    glEnable(GL_BLEND);
+
+    glColor4f(1.0f,1.0f,1.0f,0.08f);
+
+    glBegin(GL_QUADS);
+
+    glVertex2f(-0.78f,0.24f);
+    glVertex2f(0.76f,0.24f);
+
+    glVertex2f(0.70f,0.18f);
+    glVertex2f(-0.72f,0.18f);
+
+    glEnd();
+
+    glDisable(GL_BLEND);
+
     glPopMatrix();
 }
 
@@ -1490,7 +3106,7 @@ static void s3_drawBillboard(){
     s3_drawRect(0.32f,0.74f,0.56f,0.08f);
     glColor3f(0.0f,1.0f,0.0f);
     glRasterPos2f(s3_textOffset,0.77f);
-    const char* msg="Next Train Will Come After 2 Min   ";
+    const char* msg=" THANKS FOR TRAVELING WITH DHAKA METRO   ";
     for(int i=0;msg[i]!='\0';i++) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18,msg[i]);
 }
 
@@ -1501,7 +3117,7 @@ static void s3_drawLeftBillboard(){
     s3_drawRect(-0.93f,0.74f,0.46f,0.08f);
     glColor3f(0.0f,1.0f,0.0f);
     glRasterPos2f(-0.90f,0.79f);
-    const char* line1="Current Station";
+    const char* line1="CURRENT STATION";
     for(int i=0;line1[i]!='\0';i++) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18,line1[i]);
     glRasterPos2f(-0.80f,0.73f);
     const char* line2="UTTARA NORTH";
@@ -1516,11 +3132,10 @@ static void s3_drawHint(){
     glEnd();
     glColor3f(1.0f,1.0f,0.6f);
     glRasterPos2f(-0.45f,-0.96f);
-    const char* hint="SCENE 3: Platform  |  Press SPACE or N for Scene 1";
+    const char* hint="SCENE 3: Platform  |  Press ESC to exit";
     for(int i=0;hint[i]!='\0';i++) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12,hint[i]);
 }
 
-/* ---------- scene-3 display ---------- */
 static void s3_display(){
     glClearColor(0.9f,0.9f,0.9f,1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -1536,204 +3151,232 @@ static void s3_display(){
     s3_drawClock();
     s3_drawRailing();
     s3_drawPlatform();
-    s3_drawBench();
-    s3_drawTrack();
-    s3_drawPeople();
-    s3_drawTrain(s3_trainX);
-    s3_drawGlass();
-    s3_drawHint();
+s3_drawBench();
+s3_drawTrack();
+s3_drawPeople();
+
+s3_drawGlass();
+
+s3_drawTrain(s3_trainX, true);
+s3_drawTrain(s3_trainX + 1.45f, false);
+
+s3_drawHint();
 
     glutSwapBuffers();
 }
 
-/* ---------- scene-3 update ---------- */
 static void s3_step(){
     s3_timerCount++;
+    s2_gTime += 0.03f;
 
-    /* ── Train state machine ─────────────────────────────────────────── */
     if(s3_state==0){
-        /* Waiting – train off screen to the left, countdown then depart */
         if(s3_timerCount>600){ s3_state=1; s3_timerCount=0; }
 
     } else if(s3_state==1){
-        /* Train arriving from left */
         s3_trainX += 0.012f;
-        if(s3_trainX > -0.2f){
-            s3_trainX = -0.2f;   /* stop exactly */
-            s3_trainStopped = true;
-            s3_doorOpen  = true;
-            s3_glassOpen = true;
-            s3_state=2; s3_timerCount=0;
-            /* Tell each person to start boarding toward the door */
-            float doorX = s3_doorNdcX();
-            /* Spread 4 people across 2 door openings with slight offsets */
-            float targets[4] = { doorX-0.08f, doorX-0.03f,
-                                  doorX+0.03f, doorX+0.08f };
+        if(s3_trainX > -1.05f){
+           s3_trainX      = -1.05f;
+
+            s3_trainStopped= true;
+            s3_doorOpen    = true;
+            s3_glassOpen   = true;
+            s3_state       = 2;
+            s3_timerCount  = 0;
+            float doorX    = s3_doorNdcX();
+            float targets[4]={ doorX-0.08f, doorX-0.03f,
+                                doorX+0.03f, doorX+0.08f };
             for(int i=0;i<4;i++){
                 s3_persons[i].boarding   = true;
                 s3_persons[i].boardTargX = targets[i];
-                /* Set walk direction toward target */
                 s3_persons[i].dir = (targets[i] > s3_persons[i].px) ? 1 : -1;
             }
         }
 
     } else if(s3_state==2){
-        /* Doors open – people walk to door and board */
-        bool allBoarded = true;
+        bool allBoarded=true;
         for(int i=0;i<4;i++){
-            S3Person&p = s3_persons[i];
+            S3Person&p=s3_persons[i];
             if(p.inTrain) continue;
-            allBoarded = false;
+            allBoarded=false;
             if(p.boarding){
-                float step = 0.006f;
-                if(p.px < p.boardTargX - step)      p.px += step;
-                else if(p.px > p.boardTargX + step)  p.px -= step;
-                else {
-                    /* Reached door — disappear into train */
-                    p.inTrain  = true;
-                    p.boarding = false;
-                }
-                p.wc += 0.09f;  /* walking animation */
+                float step=0.006f;
+                if     (p.px < p.boardTargX - step) p.px += step;
+                else if(p.px > p.boardTargX + step) p.px -= step;
+                else { p.inTrain=true; p.boarding=false; }
+                p.wc += 0.09f;
             }
         }
-        /* Once everyone has boarded wait a moment then depart */
-        if(allBoarded && s3_timerCount > 80){
-            s3_state=3; s3_timerCount=0;
-            s3_doorOpen  = false;
-            s3_glassOpen = false;
-            s3_trainStopped = false;
+        if(allBoarded && s3_timerCount>80){
+            s3_state      = 3;
+            s3_timerCount = 0;
+            s3_doorOpen   = false;
+            s3_glassOpen  = false;
+            s3_trainStopped=false;
         }
 
     } else if(s3_state==3){
-        /* Train departing to the right */
         s3_trainX += 0.012f;
-        if(s3_trainX > 2.0f){
-            /* Reset everything for next cycle */
-            s3_trainX = -2.0f;
-            s3_state  = 0;
+        if(s3_trainX > 2.4f){
+          s3_trainX     = -4.2f;
+            s3_state      = 0;
             s3_timerCount = 0;
-            s3_initPersons();  // fresh set of people appear on platform
+            s3_initPersons();
         }
     }
 
-    //  People pacing (only while waiting, state 0)
     if(s3_state==0){
         for(int i=0;i<4;i++){
-            S3Person&p = s3_persons[i];
+            S3Person&p=s3_persons[i];
             p.px += 0.003f * p.dir;
-            /* bounce within platform bounds */
-            if(p.px >  0.75f){ p.px =  0.75f; p.dir = -1; }
-            if(p.px < -0.80f){ p.px = -0.80f; p.dir =  1; }
+            if(p.px >  0.75f){ p.px =  0.75f; p.dir=-1; }
+            if(p.px < -0.80f){ p.px = -0.80f; p.dir= 1; }
             p.wc += 0.09f;
         }
     }
 
-    // Billboard ticker
     s3_textOffset -= 0.005f;
     if(s3_textOffset < 0.3f) s3_textOffset = 0.85f;
 }
 
-//scene-3 projection
-static void s3_setProjection(int w, int h){
+static void display_cb(){ s3_display(); }
+
+static void reshape_cb(int w,int h){
     glViewport(0,0,w,h);
     glMatrixMode(GL_PROJECTION); glLoadIdentity();
     gluOrtho2D(-1.0,1.0,-1.0,1.0);
     glMatrixMode(GL_MODELVIEW);
 }
 
-
-static void display_cb(){
-    if(currentScene==1)      s1_display();
-    else if(currentScene==2) s2_display();
-    else                     s3_display();
-}
-
-static void reshape_cb(int w,int h){
-    if(currentScene==1)      s1_setProjection(w,h);
-    else if(currentScene==2) s2_setProjection(w,h);
-    else                     s3_setProjection(w,h);
-}
-
 static void timer_cb(int){
-    static float lastT=0.0f;
-    float now=glutGet(GLUT_ELAPSED_TIME)/1000.f;
-    float dt=now-lastT; if(dt>0.05f)dt=0.05f;
-    lastT=now;
-
-    if(currentScene==1)      s1_step();
-    else if(currentScene==2) s2_step(dt);
-    else                     s3_step();
-
+    s3_step();
     glutPostRedisplay();
     glutTimerFunc(30,timer_cb,0);
 }
 
 static void key_cb(unsigned char k,int,int){
-    if(k==27) exit(0);   /* ESC = quit */
+    if(k==27) exit(0);
+}
 
-    if(k==' '||k=='n'||k=='N'){
-        /* cycle through scenes: 1 → 2 → 3 → 1 */
-        currentScene=(currentScene%3)+1;
-        /* re-apply correct projection for new scene */
-        int w=glutGet(GLUT_WINDOW_WIDTH);
-        int h=glutGet(GLUT_WINDOW_HEIGHT);
-        if(currentScene==1)      s1_setProjection(w,h);
-        else if(currentScene==2) s2_setProjection(w,h);
-        else                     s3_setProjection(w,h);
-        glutPostRedisplay();
-        return;
+static void unifiedDisplay() {
+    if      (gActiveScene == 1) S1::display();
+    else if (gActiveScene == 2) display();
+    else if (gActiveScene == 3) s3_display();
+}
+
+static void unifiedReshape(int w, int h) {
+    glViewport(0, 0, w, h);
+    glMatrixMode(GL_PROJECTION); glLoadIdentity();
+    if      (gActiveScene == 1) gluOrtho2D(-15.0, 15.0, -2.0, 10.0);
+    else if (gActiveScene == 2) gluOrtho2D(0, WW, 0, WH);
+    else                        gluOrtho2D(-1.0, 1.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+}
+
+static void switchScene(int scene) {
+    gActiveScene = scene;
+    if (scene == 1) {
+        glClearColor(0.02f, 0.03f, 0.08f, 1.0f);
+    } else if (scene == 2) {
+        glClearColor(0.89f, 0.88f, 0.86f, 1.0f);
+    } else {
+        glClearColor(0.9f, 0.9f, 0.9f, 1.0f);
     }
-    if(currentScene==2){
-        if(k=='r'||k=='R'){
-            for(int i=0;i<S2_NP;i++) s2_initPerson(i);
-            s2_initQueuers();
+    int w = glutGet(GLUT_WINDOW_WIDTH);
+    int h = glutGet(GLUT_WINDOW_HEIGHT);
+    glViewport(0, 0, w, h);
+    glMatrixMode(GL_PROJECTION); glLoadIdentity();
+    if (scene == 1)      gluOrtho2D(-15.0, 15.0, -2.0, 10.0);
+    else if (scene == 2) gluOrtho2D(0, WW, 0, WH);
+    else                 gluOrtho2D(-1.0, 1.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glutPostRedisplay();
+}
+
+static void unifiedKeyboard(unsigned char k, int x, int y) {
+    if (k == 27) { exit(0); }
+
+    if (k == '1') { switchScene(1); return; }
+    if (k == '2') { switchScene(2); return; }
+    if (k == '3') { switchScene(3); return; }
+
+    if (gActiveScene == 2) {
+        if (k == 'f' || k == 'F') {
+            gFireAlarm = !gFireAlarm;
+            if (!gFireAlarm) gAlarmFlash = 0.f;
+        }
+        if (k == 'r' || k == 'R') {
+            for (int i = 0; i < NP; i++) initPerson(i);
+            initQueuers(); initXWalkers();
+            initQL(); gPurchaseCount = 0;
+            gFireAlarm = false; gAlarmFlash = 0.f;
         }
     }
 }
 
-/* ============================================================
-   MAIN
-   ============================================================ */
-int main(int argc,char**argv){
-    /* --- scene-2 machine centres --- */
-    s2_MCX[0]=(float)S2_WW/2 - S2_MGAP;
-    s2_MCX[1]=(float)S2_WW/2;
-    s2_MCX[2]=(float)S2_WW/2 + S2_MGAP;
+static void unifiedTimer(int) {
+    float now = glutGet(GLUT_ELAPSED_TIME) / 1000.0f;
 
-    /* --- scene-1 init --- */
-    s1_generateWindowColors(256);
-    s1_initClouds();
-    s1_initPeople();
-    s1_initLamps();
+    if (gActiveScene == 1) {
+        S1::update(0);
+    } else if (gActiveScene == 2) {
+        float dt = now - lastTime;
+        if (dt > 0.05f) dt = 0.05f;
+        lastTime = now; gTime += dt;
+        if (gFireAlarm) gAlarmFlash += dt;
+        for (int i = 0; i < NP; i++) updatePerson(P[i], dt);
+        updateQueuers(dt);
+        updateXWalkers(dt);
+        updateQLQueue(dt);
+    } else {
+        s3_step();
+    }
 
-    /* --- scene-2 init --- */
-    for(int i=0;i<S2_NP;i++) s2_initPerson(i);
-    s2_initQueuers();
+    glutPostRedisplay();
+    glutTimerFunc(30, unifiedTimer, 0);
+}
 
-    /* --- scene-3 init --- */
+int main(int argc, char** argv) {
+    MCX[0] = (float)WW / 2 - MGAP;
+    MCX[1] = (float)WW / 2;
+    MCX[2] = (float)WW / 2 + MGAP;
+    for (int i = 0; i < NP; i++) initPerson(i);
+    initQueuers();
+    initXWalkers();
+    initQL();
+    gPurchaseCount = 0;
+
     s3_initPersons();
 
-    /* --- GLUT setup --- */
-    glutInit(&argc,argv);
-    glutInitDisplayMode(GLUT_DOUBLE|GLUT_RGBA);
-    glutInitWindowSize(WIN_W,WIN_H);
-    glutCreateWindow("Dhaka Metro  |  SPACE / N = Switch Scene  |  ESC = Exit");
+    S1::generateWindowColors(256);
+    S1::initClouds();
+    S1::initPeople();
+    S1::initStairPeople();
+    S1::initLamps();
+    S1::initStars();
 
+
+    glutInit(&argc, argv);
+    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA);
+    glutInitWindowSize(1350, 680);
+    glutCreateWindow("Dhaka Metro  [Press 1/2/3 to switch scenes, ESC to exit]");
+
+    glClearColor(0.02f, 0.03f, 0.08f, 1.0f);
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_LINE_SMOOTH);
     glEnable(GL_POINT_SMOOTH);
-    glHint(GL_LINE_SMOOTH_HINT,GL_NICEST);
-    glHint(GL_POINT_SMOOTH_HINT,GL_NICEST);
+    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+    glHint(GL_POINT_SMOOTH_HINT, GL_NICEST);
     glLineWidth(1.2f);
 
-    /* set initial projection for scene 1 */
-    s1_setProjection(WIN_W,WIN_H);
+    S1::initGL();
 
-    glutDisplayFunc(display_cb);
-    glutReshapeFunc(reshape_cb);
-    glutKeyboardFunc(key_cb);
-    glutTimerFunc(30,timer_cb,0);
+    glutDisplayFunc(unifiedDisplay);
+    glutReshapeFunc(unifiedReshape);
+    glutKeyboardFunc(unifiedKeyboard);
+
+    lastTime = glutGet(GLUT_ELAPSED_TIME) / 1000.0f;
+    glutTimerFunc(30, unifiedTimer, 0);
     glutMainLoop();
     return 0;
 }
