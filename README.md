@@ -57,5 +57,5 @@
 - **C++11** or later
 
 # For any queries:
-[Email](23-54682-3@student.aiub.edu)
-[Linkedin](https://www.linkedin.com/in/t0n0y/?skipRedirect=true)
+Email : 23-54682-3@student.aiub.edu or tonoyt735@gmail.com
+[Linkedin](https://www.linkedin.com/in/t0n0y/)
