@@ -3170,7 +3170,7 @@ static void s3_step(){
     s2_gTime += 0.03f;
 
     if(s3_state==0){
-        if(s3_timerCount>600){ s3_state=1; s3_timerCount=0; }
+        if(s3_timerCount>200){ s3_state=1; s3_timerCount=0; }
 
     } else if(s3_state==1){
         s3_trainX += 0.012f;
